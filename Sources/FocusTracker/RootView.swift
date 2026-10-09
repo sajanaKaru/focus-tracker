@@ -5,6 +5,7 @@ enum SidebarItem: String, CaseIterable, Identifiable {
     case today = "Today"
     case tickets = "Tickets"
     case board = "Board"
+    case pullRequests = "Pull Requests"
     case reports = "Reports"
 
     var id: String { rawValue }
@@ -14,6 +15,7 @@ enum SidebarItem: String, CaseIterable, Identifiable {
         case .today: "sun.max"
         case .tickets: "list.bullet.rectangle"
         case .board: "rectangle.split.3x1"
+        case .pullRequests: "arrow.triangle.pull"
         case .reports: "chart.bar"
         }
     }
@@ -142,6 +144,7 @@ struct RootView: View {
             filtered { TicketsView(selectedTicketID: $selectedTicketID, filter: filter) }
         case .board:
             filtered { BoardView(selectedTicketID: $selectedTicketID, filter: filter) }
+        case .pullRequests: PullRequestsView()
         case .reports: ReportsView()
         }
     }

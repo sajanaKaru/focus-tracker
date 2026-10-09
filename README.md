@@ -18,6 +18,8 @@ Requires macOS 14+ and Xcode / Swift 5.9+.
 2. App → Settings (⌘,) → paste the token → **Save & Sync**. The token is stored in the Keychain.
 3. Optionally restrict to repos (`owner/name, owner/other`) and include assigned pull requests.
 
+The Pull Requests tab lists your open PRs (grouped by what needs attention). A fine-grained token needs Pull requests: Read, plus Commit statuses and Checks: Read for the CI chip; a classic `repo` token covers both. The repo restriction above applies to this tab too.
+
 Open issues assigned to you are synced every N minutes (and with ⌘R). Issues that are closed or reassigned are marked Done.
 Local fields (status, priority, notes, estimate, time entries) are never overwritten by a sync.
 
