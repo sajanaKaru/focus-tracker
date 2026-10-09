@@ -20,6 +20,14 @@ struct DayPlanCard: View {
 
     private func text(_ minutes: Int) -> String { Format.short(TimeInterval(minutes * 60)) }
 
+    /// "tomorrow", or the weekday of the next working day (for example "Monday" after a Friday).
+    private var nextWorkDayName: String {
+        let calendar = Calendar.current
+        let next = store.planSettings.nextWorkingDay(after: day)
+        let tomorrow = calendar.date(byAdding: .day, value: 1, to: day) ?? day
+        return calendar.isDate(next, inSameDayAs: tomorrow) ? "tomorrow" : next.formatted(.dateTime.weekday(.wide))
+    }
+
     var body: some View {
         let candidates = store.planCandidates(for: day)
         let plannedIDs = Set(store.plan(for: day)?.ticketIDs ?? [])
@@ -65,7 +73,12 @@ struct DayPlanCard: View {
 
             if !fresh.isEmpty { newStrip(fresh) }
             if candidates.isEmpty {
-                EmptyHint(text: "No open tickets to plan. Sync GitHub or add a ticket.", symbol: "checklist")
+                EmptyHint(
+                    text: workingDay
+                        ? "No open tickets to plan. Sync GitHub or add a ticket."
+                        : "Nothing to plan on a day off. Carried-over tickets show on \(nextWorkDayName).",
+                    symbol: "checklist"
+                )
             } else {
                 searchField
                 let query = search.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -142,10 +155,10 @@ struct DayPlanCard: View {
             Spacer()
             if canDefer {
                 Button { store.deferToTomorrow(candidate.id, from: day) } label: {
-                    Label("Tomorrow", systemImage: "arrow.turn.down.right")
+                    Label(nextWorkDayName.capitalized, systemImage: "arrow.turn.down.right")
                 }
                 .buttonStyle(.secondary)
-                .help("Move to tomorrow")
+                .help("Move to \(nextWorkDayName)")
             }
             Chip(text: candidate.reason.title, color: candidate.reason.color)
             Text("\(candidate.estimatedByApp ? "~" : "")\(text(candidate.estimateMinutes))")

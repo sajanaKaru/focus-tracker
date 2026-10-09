@@ -54,7 +54,35 @@ final class DayPlanStoreTests: XCTestCase {
         addTicket(store, "a", .urgent, minutes: 60)
 
         XCTAssertEqual(store.capacity(for: saturday, calendarBusy: [], calendar: cal).capacityMinutes, 0)
-        XCTAssertEqual(store.ensurePlan(for: saturday, calendarBusy: [], calendar: cal)?.ticketIDs, [])
+        XCTAssertTrue(store.planCandidates(for: saturday, calendar: cal).isEmpty)
+        XCTAssertNil(store.ensurePlan(for: saturday, calendarBusy: [], calendar: cal))
+        XCTAssertNil(store.plan(for: saturday, calendar: cal))
+    }
+
+    func testFridayWorkCarriesOverToMondayAcrossTheWeekend() {
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = TimeZone(secondsFromGMT: 0)!
+        let friday = cal.date(from: DateComponents(year: 2026, month: 10, day: 9))!
+        let saturday = cal.date(byAdding: .day, value: 1, to: friday)!
+        let monday = cal.date(byAdding: .day, value: 3, to: friday)!
+        let (store, _, defaults) = makeStore()
+        defaults.set(5, forKey: PrefKey.workDays)
+        let unfinished = addTicket(store, "unfinished", .none, minutes: 60)
+        let finished = addTicket(store, "finished", .none, minutes: 60)
+        let deferred = addTicket(store, "deferred", .none, minutes: 60)
+        let other = addTicket(store, "other", .none, minutes: 60)
+        for ticket in [unfinished, finished, deferred] { store.togglePlanned(ticket.id, on: friday, calendar: cal) }
+        store.setStatus(finished.id, .done)
+        store.deferToTomorrow(deferred.id, from: friday, calendar: cal)
+
+        XCTAssertTrue(store.planCandidates(for: saturday, calendar: cal).isEmpty)
+        XCTAssertNil(store.ensurePlan(for: saturday, calendarBusy: [], calendar: cal))
+
+        let reasons = Dictionary(uniqueKeysWithValues: store.planCandidates(for: monday, calendar: cal).map { ($0.id, $0.reason) })
+        XCTAssertEqual(reasons[unfinished.id], .carriedOver)
+        XCTAssertEqual(reasons[deferred.id], .carriedOver)
+        XCTAssertNil(reasons[finished.id])
+        XCTAssertNotEqual(reasons[other.id], .carriedOver)
     }
 
     func testCapacitySubtractsLoggedActivities() {

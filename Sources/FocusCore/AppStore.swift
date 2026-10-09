@@ -755,8 +755,9 @@ public final class AppStore {
         dayPlans.first { calendar.isDate($0.day, inSameDayAs: day) }
     }
 
-    /// Ranked suggestions for `day`; tickets from the most recent earlier non-empty plan that are still open rank as carried over.
+    /// Ranked suggestions for `day`, none on a day off; tickets from the most recent earlier non-empty plan that are still open rank as carried over.
     public func planCandidates(for day: Date, calendar: Calendar = .current) -> [PlanCandidate] {
+        guard planSettings.isWorkingDay(day, calendar: calendar) else { return [] }
         let start = calendar.startOfDay(for: day)
         let earlier = dayPlans
             .filter { $0.day < start && !($0.ticketIDs.isEmpty && ($0.deferredTicketIDs ?? []).isEmpty) }

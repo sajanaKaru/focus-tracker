@@ -27,8 +27,15 @@ struct TodayView: View {
         )
     }
 
+    /// Steps over days off, but stops on a day that has tracked time so worked weekends stay reachable.
     private func shiftDay(_ offset: Int) {
-        guard let shifted = Calendar.current.date(byAdding: .day, value: offset, to: day) else { return }
+        let calendar = Calendar.current
+        var shifted = day
+        for _ in 0..<7 {
+            guard let next = calendar.date(byAdding: .day, value: offset, to: shifted) else { return }
+            shifted = next
+            if store.planSettings.isWorkingDay(shifted) || store.trackedTime(in: store.dayRange(for: shifted)) > 0 { break }
+        }
         dayBinding.wrappedValue = shifted
     }
 
