@@ -42,15 +42,15 @@ public struct Capacity: Equatable, Sendable {
 
 /// Why a ticket is suggested; the raw value is its rank (lower is stronger).
 public enum PlanReason: Int, Sendable {
-    case dueNow, dueSoon, sprintEnding, carriedOver, inProgress, inSprint, priority, open
+    case dueNow, carriedOver, inProgress, dueSoon, sprintEnding, inSprint, priority, open
 
     public var title: String {
         switch self {
         case .dueNow: "Due now"
-        case .dueSoon: "Due soon"
-        case .sprintEnding: "Sprint ends soon"
         case .carriedOver: "Carried over"
         case .inProgress: "In progress"
+        case .dueSoon: "Due soon"
+        case .sprintEnding: "Sprint ends soon"
         case .inSprint: "In sprint"
         case .priority: "Priority"
         case .open: "Open"
@@ -61,9 +61,11 @@ public enum PlanReason: Int, Sendable {
 public struct PlanCandidate: Identifiable, Equatable, Sendable {
     public var ticket: Ticket
     public var reason: PlanReason
+    /// Estimate still to do: the ticket estimate minus time already tracked.
     public var estimateMinutes: Int
     /// True when the ticket has no estimate and the default was used.
     public var estimatedByApp: Bool
+    public var trackedMinutes: Int = 0
 
     public var id: UUID { ticket.id }
 }
@@ -111,22 +113,22 @@ public enum DayPlanner {
     }
 
     public static func rank(
-        tickets: [Ticket], carriedOver: Set<UUID>, now: Date, settings: PlanSettings, calendar: Calendar = .current
+        tickets: [Ticket], carriedOver: Set<UUID>, now: Date, settings: PlanSettings, calendar: Calendar = .current,
+        trackedMinutes: [UUID: Int] = [:]
     ) -> [PlanCandidate] {
         let today = calendar.startOfDay(for: now)
         let tomorrow = calendar.date(byAdding: .day, value: 1, to: today) ?? today
         let soonLimit = calendar.date(byAdding: .day, value: 3, to: today) ?? today
 
         func reason(for ticket: Ticket) -> PlanReason {
-            if let due = dueDate(of: ticket) {
-                if due < tomorrow { return .dueNow }
-                if due < soonLimit { return .dueSoon }
-            }
+            let due = dueDate(of: ticket)
+            if let due, due < tomorrow { return .dueNow }
+            if carriedOver.contains(ticket.id) { return .carriedOver }
+            if ticket.status == .inProgress || ticket.status == .inReview { return .inProgress }
+            if let due, due < soonLimit { return .dueSoon }
             if ticket.sprints.contains(where: { $0.isCurrent(at: now) && ($0.end ?? .distantFuture) < soonLimit }) {
                 return .sprintEnding
             }
-            if carriedOver.contains(ticket.id) { return .carriedOver }
-            if ticket.status == .inProgress || ticket.status == .inReview { return .inProgress }
             if ticket.sprints.contains(where: { $0.isCurrent(at: now) }) { return .inSprint }
             return ticket.priority == .none ? .open : .priority
         }
@@ -135,11 +137,13 @@ public enum DayPlanner {
             .filter { [.todo, .inProgress, .inReview].contains($0.status) && $0.github?.remoteClosed != true }
             .map { ticket -> PlanCandidate in
                 let estimate = ticket.effectiveEstimateMinutes
+                let tracked = trackedMinutes[ticket.id] ?? 0
                 return PlanCandidate(
                     ticket: ticket,
                     reason: reason(for: ticket),
-                    estimateMinutes: estimate ?? settings.defaultEstimateMinutes,
-                    estimatedByApp: estimate == nil
+                    estimateMinutes: max(0, (estimate ?? settings.defaultEstimateMinutes) - tracked),
+                    estimatedByApp: estimate == nil,
+                    trackedMinutes: tracked
                 )
             }
             .sorted {
@@ -154,7 +158,11 @@ public enum DayPlanner {
         var remaining = capacityMinutes
         var picked: [UUID] = []
         for candidate in candidates {
-            if candidate.estimateMinutes > remaining { break }
+            if candidate.estimateMinutes > remaining {
+                // Unfinished work bigger than the day is still planned and takes what is left.
+                if candidate.reason == .carriedOver || candidate.reason == .inProgress { picked.append(candidate.id) }
+                break
+            }
             remaining -= candidate.estimateMinutes
             picked.append(candidate.id)
         }
@@ -162,8 +170,9 @@ public enum DayPlanner {
         return picked
     }
 
-    public static func plannedMinutes(_ candidates: [PlanCandidate], ids: Set<UUID>) -> Int {
-        candidates.filter { ids.contains($0.id) }.reduce(0) { $0 + $1.estimateMinutes }
+    /// With `capacityMinutes`, each ticket counts at most one day's capacity.
+    public static func plannedMinutes(_ candidates: [PlanCandidate], ids: Set<UUID>, capacityMinutes: Int? = nil) -> Int {
+        candidates.filter { ids.contains($0.id) }.reduce(0) { $0 + min($1.estimateMinutes, capacityMinutes ?? .max) }
     }
 
     public static func load(
@@ -181,9 +190,11 @@ public enum DayPlanner {
         let adHoc = activities.filter { $0.calendarEventID == nil }.reduce(0.0) { $0 + $1.duration(in: day, at: now) }
 
         var remainingPlanned = 0
+        let dayLeft = max(0, capacityMinutes - minutes(ticketToday))
         for ticket in tickets where plannedIDs.contains(ticket.id) && ticket.status != .done {
             let estimate = ticket.effectiveEstimateMinutes ?? settings.defaultEstimateMinutes
-            remainingPlanned += max(0, estimate - minutes(totalByTicket[ticket.id] ?? 0))
+            // A ticket bigger than the rest of the day only takes the rest of the day.
+            remainingPlanned += min(max(0, estimate - minutes(totalByTicket[ticket.id] ?? 0)), dayLeft)
         }
 
         return DayLoad(

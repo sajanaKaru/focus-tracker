@@ -70,11 +70,28 @@ final class DayLoadTests: XCTestCase {
     }
 
     func testOverloadWhenPlannedWorkExceedsCapacity() {
-        let a = ticket("big", estimate: 120)
-        let result = load(planned: [a], tickets: [a], capacity: 60)
+        let a = ticket("a", estimate: 60)
+        let b = ticket("b", estimate: 60)
+        let result = load(planned: [a, b], tickets: [a, b], capacity: 60)
         XCTAssertEqual(result.remainingTodayMinutes, -60)
         XCTAssertTrue(result.isOverloaded)
         XCTAssertEqual(result.overloadMinutes, 60)
+    }
+
+    func testOneMultiDayTicketFillsTheDayWithoutOverloading() {
+        let big = ticket("big", estimate: 1200)
+        let result = load(planned: [big], tickets: [big])
+        XCTAssertEqual(result.remainingPlannedMinutes, 360)
+        XCTAssertEqual(result.remainingTodayMinutes, 0)
+        XCTAssertFalse(result.isOverloaded)
+    }
+
+    func testMultiDayTicketAllocationShrinksAsTheDayIsWorked() {
+        let big = ticket("big", estimate: 1200)
+        let result = load(planned: [big], tickets: [big], entries: [entry(big, startHour: 9, minutes: 120)])
+        XCTAssertEqual(result.remainingPlannedMinutes, 240)
+        XCTAssertEqual(result.remainingTodayMinutes, 0)
+        XCTAssertFalse(result.isOverloaded)
     }
 
     func testNotOverloadedHasZeroOverload() {

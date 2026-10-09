@@ -85,6 +85,39 @@ final class DayPlanStoreTests: XCTestCase {
         XCTAssertNotEqual(reasons[other.id], .carriedOver)
     }
 
+    func testTicketsAlreadyPlannedOnADayOffStayVisible() {
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = TimeZone(secondsFromGMT: 0)!
+        let saturday = cal.date(from: DateComponents(year: 2026, month: 10, day: 10))!
+        let (store, _, defaults) = makeStore()
+        defaults.set(5, forKey: PrefKey.workDays)
+        let planned = addTicket(store, "planned", .none, minutes: 60)
+        addTicket(store, "other", .urgent, minutes: 60)
+        store.togglePlanned(planned.id, on: saturday, calendar: cal)
+
+        XCTAssertEqual(store.planCandidates(for: saturday, calendar: cal).map(\.id), [planned.id])
+    }
+
+    func testUnfinishedMultiDayTicketIsPlannedOnMondayAheadOfDueSoonWork() {
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = TimeZone(secondsFromGMT: 0)!
+        let friday = cal.date(from: DateComponents(year: 2026, month: 10, day: 9))!
+        let monday = cal.date(byAdding: .day, value: 3, to: friday)!
+        let (store, _, defaults) = makeStore()
+        defaults.set(5, forKey: PrefKey.workDays)
+        let big = addTicket(store, "big", .none, minutes: 1200)
+        store.update(big.id) { $0.status = .inProgress }
+        store.addManualEntry(ticketID: big.id, duration: 3 * 3600, endingAt: friday.addingTimeInterval(12 * 3600))
+        store.togglePlanned(big.id, on: friday, calendar: cal)
+        let soon = addTicket(store, "due soon", .none, minutes: 60)
+        store.update(soon.id) { $0.dueDate = monday.addingTimeInterval(36 * 3600) }
+
+        let candidate = store.planCandidates(for: monday, calendar: cal).first { $0.id == big.id }
+        XCTAssertEqual(candidate?.estimateMinutes, 1020)
+        XCTAssertEqual(candidate?.trackedMinutes, 180)
+        XCTAssertEqual(store.ensurePlan(for: monday, calendarBusy: [], calendar: cal)?.ticketIDs, [big.id])
+    }
+
     func testCapacitySubtractsLoggedActivities() {
         let (store, _, _) = makeStore()
         let start = Calendar.current.startOfDay(for: Date())

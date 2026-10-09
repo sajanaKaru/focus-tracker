@@ -57,8 +57,8 @@ final class DayPlannerTests: XCTestCase {
         )
     }
 
-    private func rank(_ tickets: [Ticket], carried: Set<UUID> = []) -> [PlanCandidate] {
-        DayPlanner.rank(tickets: tickets, carriedOver: carried, now: at(9), settings: PlanSettings(), calendar: cal)
+    private func rank(_ tickets: [Ticket], carried: Set<UUID> = [], tracked: [UUID: Int] = [:]) -> [PlanCandidate] {
+        DayPlanner.rank(tickets: tickets, carriedOver: carried, now: at(9), settings: PlanSettings(), calendar: cal, trackedMinutes: tracked)
     }
 
     func testRankingOrderFollowsSignalStrength() {
@@ -75,8 +75,18 @@ final class DayPlannerTests: XCTestCase {
             ticket("overdue", due: at(-48)),
         ]
         let ranked = rank(tickets, carried: [carried.id])
-        XCTAssertEqual(ranked.map(\.ticket.title), ["overdue", "today", "soon", "sprint", "carried", "doing", "high", "plain"])
-        XCTAssertEqual(ranked.map(\.reason), [.dueNow, .dueNow, .dueSoon, .sprintEnding, .carriedOver, .inProgress, .priority, .open])
+        XCTAssertEqual(ranked.map(\.ticket.title), ["overdue", "today", "carried", "doing", "soon", "sprint", "high", "plain"])
+        XCTAssertEqual(ranked.map(\.reason), [.dueNow, .dueNow, .carriedOver, .inProgress, .dueSoon, .sprintEnding, .priority, .open])
+    }
+
+    func testRemainingEstimateExcludesTrackedTime() {
+        let big = ticket("big", estimate: 1200)
+        let spent = ticket("spent", estimate: 60)
+        let ranked = rank([big, spent], tracked: [big.id: 180, spent.id: 90])
+        let byTitle = Dictionary(uniqueKeysWithValues: ranked.map { ($0.ticket.title, $0) })
+        XCTAssertEqual(byTitle["big"]?.estimateMinutes, 1020)
+        XCTAssertEqual(byTitle["big"]?.trackedMinutes, 180)
+        XCTAssertEqual(byTitle["spent"]?.estimateMinutes, 0)
     }
 
     func testCurrentSprintTicketsRankAboveOtherOpenWork() {
@@ -137,5 +147,32 @@ final class DayPlannerTests: XCTestCase {
         let ranked = rank([ticket("big", estimate: 600)])
         XCTAssertEqual(DayPlanner.autoPick(ranked, capacityMinutes: 60), ranked.map(\.id))
         XCTAssertEqual(DayPlanner.autoPick([], capacityMinutes: 60), [])
+    }
+
+    func testAutoPickTakesOneOversizedContinuationTicketThenStops() {
+        let ranked = rank([
+            ticket("a", status: .inProgress, estimate: 120, updated: 1),
+            ticket("b", status: .inProgress, estimate: 600, updated: 2),
+            ticket("c", priority: .high, estimate: 30),
+        ])
+        XCTAssertEqual(ranked.map(\.ticket.title), ["a", "b", "c"])
+        XCTAssertEqual(DayPlanner.autoPick(ranked, capacityMinutes: 240).count, 2)
+        XCTAssertEqual(DayPlanner.autoPick(ranked, capacityMinutes: 240), ranked.prefix(2).map(\.id))
+    }
+
+    func testAutoPickStillStopsAtAnOversizedNewTicket() {
+        let ranked = rank([
+            ticket("a", priority: .urgent, estimate: 120),
+            ticket("b", priority: .high, estimate: 600),
+            ticket("c", priority: .low, estimate: 30),
+        ])
+        XCTAssertEqual(DayPlanner.autoPick(ranked, capacityMinutes: 240), [ranked[0].id])
+    }
+
+    func testPlannedMinutesCapsEachTicketAtTheDaysCapacity() {
+        let ranked = rank([ticket("big", estimate: 1200), ticket("small", estimate: 60)])
+        let ids = Set(ranked.map(\.id))
+        XCTAssertEqual(DayPlanner.plannedMinutes(ranked, ids: ids), 1260)
+        XCTAssertEqual(DayPlanner.plannedMinutes(ranked, ids: ids, capacityMinutes: 360), 420)
     }
 }

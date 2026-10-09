@@ -755,17 +755,27 @@ public final class AppStore {
         dayPlans.first { calendar.isDate($0.day, inSameDayAs: day) }
     }
 
-    /// Ranked suggestions for `day`, none on a day off; tickets from the most recent earlier non-empty plan that are still open rank as carried over.
+    /// Ranked suggestions for `day`; tickets from the most recent earlier non-empty plan that are still open rank as carried over.
+    /// A day off lists only the tickets already planned on it.
     public func planCandidates(for day: Date, calendar: Calendar = .current) -> [PlanCandidate] {
-        guard planSettings.isWorkingDay(day, calendar: calendar) else { return [] }
         let start = calendar.startOfDay(for: day)
         let earlier = dayPlans
             .filter { $0.day < start && !($0.ticketIDs.isEmpty && ($0.deferredTicketIDs ?? []).isEmpty) }
             .max { $0.day < $1.day }
         let earlierIDs = (earlier?.ticketIDs ?? []) + (earlier?.deferredTicketIDs ?? [])
         let carried = Set(earlierIDs.filter { ticket($0).map { $0.status != .done } ?? false })
+        let tracked = Dictionary(grouping: entries, by: \.ticketID)
+            .mapValues { Int(($0.reduce(0) { $0 + $1.duration(at: now) } / 60).rounded()) }
         // A future day is ranked as of its own start so "due now" means due by then.
-        return DayPlanner.rank(tickets: tickets, carriedOver: carried, now: max(now, start), settings: planSettings, calendar: calendar)
+        let ranked = DayPlanner.rank(
+            tickets: tickets, carriedOver: carried, now: max(now, start), settings: planSettings, calendar: calendar,
+            trackedMinutes: tracked
+        )
+        guard planSettings.isWorkingDay(day, calendar: calendar) else {
+            let planned = Set(plan(for: day, calendar: calendar)?.ticketIDs ?? [])
+            return ranked.filter { planned.contains($0.id) }
+        }
+        return ranked
     }
 
     public func capacity(for day: Date, calendarBusy: [DateInterval], calendar: Calendar = .current) -> Capacity {

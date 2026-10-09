@@ -32,7 +32,7 @@ struct DayPlanCard: View {
         let candidates = store.planCandidates(for: day)
         let plannedIDs = Set(store.plan(for: day)?.ticketIDs ?? [])
         let capacity = store.capacity(for: day, calendarBusy: calendarBusy)
-        let planned = DayPlanner.plannedMinutes(candidates, ids: plannedIDs)
+        let planned = DayPlanner.plannedMinutes(candidates, ids: plannedIDs, capacityMinutes: capacity.capacityMinutes)
         let over = planned > capacity.capacityMinutes
         let isToday = Calendar.current.isDate(day, inSameDayAs: store.now)
         let workingDay = store.planSettings.isWorkingDay(day)
@@ -46,7 +46,7 @@ struct DayPlanCard: View {
                 Spacer()
                 Button("Re-suggest") { store.suggestPlan(for: day, calendarBusy: calendarBusy) }
                     .buttonStyle(.secondary)
-                    .disabled(candidates.isEmpty)
+                    .disabled(candidates.isEmpty || !workingDay)
                     .help("Rebuild the plan from the ranked suggestions")
             }
 
@@ -161,10 +161,10 @@ struct DayPlanCard: View {
                 .help("Move to \(nextWorkDayName)")
             }
             Chip(text: candidate.reason.title, color: candidate.reason.color)
-            Text("\(candidate.estimatedByApp ? "~" : "")\(text(candidate.estimateMinutes))")
+            Text("\(candidate.estimatedByApp ? "~" : "")\(text(candidate.estimateMinutes))\(candidate.trackedMinutes > 0 ? " left" : "")")
                 .font(.callout.monospacedDigit())
                 .foregroundStyle(.secondary)
-                .help(candidate.estimatedByApp ? "Estimated by the app: no estimate on this ticket" : "Ticket estimate")
+                .help(rowEstimateHelp(candidate))
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 8)
@@ -227,6 +227,11 @@ struct DayPlanCard: View {
                 Text("+\(fresh.count - 5) more").font(.caption).foregroundStyle(.secondary)
             }
         }
+    }
+
+    private func rowEstimateHelp(_ candidate: PlanCandidate) -> String {
+        let base = candidate.estimatedByApp ? "Estimated by the app: no estimate on this ticket" : "Ticket estimate"
+        return candidate.trackedMinutes > 0 ? "\(base). \(text(candidate.trackedMinutes)) already tracked." : base
     }
 
     private func capacityBar(planned: Int, capacity: Int, over: Bool) -> some View {
