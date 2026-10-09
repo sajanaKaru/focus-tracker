@@ -61,11 +61,13 @@ public enum PlanReason: Int, Sendable {
 public struct PlanCandidate: Identifiable, Equatable, Sendable {
     public var ticket: Ticket
     public var reason: PlanReason
-    /// Estimate still to do: the ticket estimate minus time already tracked.
+    /// Estimate still to do: the ticket estimate minus time already tracked and work planned on earlier days.
     public var estimateMinutes: Int
     /// True when the ticket has no estimate and the default was used.
     public var estimatedByApp: Bool
     public var trackedMinutes: Int = 0
+    /// Time earlier planned days are expected to use of this ticket; projected, never saved.
+    public var plannedAheadMinutes: Int = 0
 
     public var id: UUID { ticket.id }
 }
@@ -114,7 +116,7 @@ public enum DayPlanner {
 
     public static func rank(
         tickets: [Ticket], carriedOver: Set<UUID>, now: Date, settings: PlanSettings, calendar: Calendar = .current,
-        trackedMinutes: [UUID: Int] = [:]
+        trackedMinutes: [UUID: Int] = [:], plannedAheadMinutes: [UUID: Int] = [:]
     ) -> [PlanCandidate] {
         let today = calendar.startOfDay(for: now)
         let tomorrow = calendar.date(byAdding: .day, value: 1, to: today) ?? today
@@ -136,14 +138,15 @@ public enum DayPlanner {
         return tickets
             .filter { [.todo, .inProgress, .inReview].contains($0.status) && $0.github?.remoteClosed != true }
             .map { ticket -> PlanCandidate in
-                let estimate = ticket.effectiveEstimateMinutes
                 let tracked = trackedMinutes[ticket.id] ?? 0
+                let ahead = plannedAheadMinutes[ticket.id] ?? 0
                 return PlanCandidate(
                     ticket: ticket,
                     reason: reason(for: ticket),
-                    estimateMinutes: max(0, (estimate ?? settings.defaultEstimateMinutes) - tracked),
-                    estimatedByApp: estimate == nil,
-                    trackedMinutes: tracked
+                    estimateMinutes: max(0, remainingMinutes(of: ticket, tracked: tracked, settings: settings) - ahead),
+                    estimatedByApp: ticket.effectiveEstimateMinutes == nil,
+                    trackedMinutes: tracked,
+                    plannedAheadMinutes: ahead
                 )
             }
             .sorted {
@@ -151,6 +154,30 @@ public enum DayPlanner {
                 if $0.ticket.priority != $1.ticket.priority { return $0.ticket.priority.rawValue > $1.ticket.priority.rawValue }
                 return $0.ticket.updatedAt < $1.ticket.updatedAt
             }
+    }
+
+    /// Estimate minus time already tracked, never below zero; the default estimate stands in when the ticket has none.
+    public static func remainingMinutes(of ticket: Ticket, tracked: Int, settings: PlanSettings) -> Int {
+        max(0, (ticket.effectiveEstimateMinutes ?? settings.defaultEstimateMinutes) - tracked)
+    }
+
+    /// How much of each ticket the given planned days (oldest first) are expected to use up, assuming each plan is followed.
+    /// Planned tickets on a day share its capacity in order; tickets missing from `remaining` are ignored.
+    public static func plannedAhead(
+        plans: [(capacityMinutes: Int, ticketIDs: [UUID])], remaining: [UUID: Int]
+    ) -> [UUID: Int] {
+        var ahead: [UUID: Int] = [:]
+        for plan in plans {
+            var capacityLeft = plan.capacityMinutes
+            for id in plan.ticketIDs {
+                guard let total = remaining[id] else { continue }
+                let used = min(max(0, total - (ahead[id] ?? 0)), capacityLeft)
+                guard used > 0 else { continue }
+                ahead[id, default: 0] += used
+                capacityLeft -= used
+            }
+        }
+        return ahead
     }
 
     /// Takes candidates in rank order until the next one would not fit; always keeps the first.

@@ -59,10 +59,15 @@ final class DayPlanStoreTests: XCTestCase {
         XCTAssertNil(store.plan(for: saturday, calendar: cal))
     }
 
+    /// A Friday in the past week, so these tests do not depend on the plans lying in the future.
+    private func pastFriday(_ cal: Calendar) -> Date {
+        let today = cal.startOfDay(for: Date())
+        return (7...13).compactMap { cal.date(byAdding: .day, value: -$0, to: today) }.first { cal.component(.weekday, from: $0) == 6 }!
+    }
+
     func testFridayWorkCarriesOverToMondayAcrossTheWeekend() {
-        var cal = Calendar(identifier: .gregorian)
-        cal.timeZone = TimeZone(secondsFromGMT: 0)!
-        let friday = cal.date(from: DateComponents(year: 2026, month: 10, day: 9))!
+        let cal = Calendar.current
+        let friday = pastFriday(cal)
         let saturday = cal.date(byAdding: .day, value: 1, to: friday)!
         let monday = cal.date(byAdding: .day, value: 3, to: friday)!
         let (store, _, defaults) = makeStore()
@@ -99,9 +104,8 @@ final class DayPlanStoreTests: XCTestCase {
     }
 
     func testUnfinishedMultiDayTicketIsPlannedOnMondayAheadOfDueSoonWork() {
-        var cal = Calendar(identifier: .gregorian)
-        cal.timeZone = TimeZone(secondsFromGMT: 0)!
-        let friday = cal.date(from: DateComponents(year: 2026, month: 10, day: 9))!
+        let cal = Calendar.current
+        let friday = pastFriday(cal)
         let monday = cal.date(byAdding: .day, value: 3, to: friday)!
         let (store, _, defaults) = makeStore()
         defaults.set(5, forKey: PrefKey.workDays)
@@ -110,7 +114,7 @@ final class DayPlanStoreTests: XCTestCase {
         store.addManualEntry(ticketID: big.id, duration: 3 * 3600, endingAt: friday.addingTimeInterval(12 * 3600))
         store.togglePlanned(big.id, on: friday, calendar: cal)
         let soon = addTicket(store, "due soon", .none, minutes: 60)
-        store.update(soon.id) { $0.dueDate = monday.addingTimeInterval(36 * 3600) }
+        store.update(soon.id) { $0.dueDate = cal.startOfDay(for: Date()).addingTimeInterval(36 * 3600) }
 
         let candidate = store.planCandidates(for: monday, calendar: cal).first { $0.id == big.id }
         XCTAssertEqual(candidate?.estimateMinutes, 1020)
@@ -187,5 +191,73 @@ final class DayPlanStoreTests: XCTestCase {
 
         let reloaded = AppStore(storeURL: url, defaults: defaults, tokenProvider: { nil })
         XCTAssertEqual(reloaded.plan(for: Date())?.ticketIDs, [a.id])
+    }
+
+    // MARK: Projection across planned days
+
+    private func bigTicket(_ store: AppStore) -> Ticket {
+        let big = addTicket(store, "big", .none, minutes: 1200)
+        store.update(big.id) { $0.status = .inProgress }
+        let yesterdayNoon = Calendar.current.startOfDay(for: Date()).addingTimeInterval(-12 * 3600)
+        store.addManualEntry(ticketID: big.id, duration: 3 * 3600, endingAt: yesterdayNoon)
+        return store.ticket(big.id)!
+    }
+
+    private func day(_ offset: Int) -> Date {
+        Calendar.current.date(byAdding: .day, value: offset, to: Calendar.current.startOfDay(for: Date()))!
+    }
+
+    func testPlannedDaysUseUpALongTicketOnLaterDays() {
+        let (store, _, _) = makeStore()
+        let big = bigTicket(store)
+        for offset in 1...3 { store.togglePlanned(big.id, on: day(offset)) }
+
+        func left(_ offset: Int) -> Int? { store.planCandidates(for: day(offset)).first { $0.id == big.id }?.estimateMinutes }
+        XCTAssertEqual(left(1), 1020)
+        XCTAssertEqual(left(2), 660)
+        XCTAssertEqual(left(3), 300)
+        XCTAssertNil(left(4), "projected to be finished by then")
+        XCTAssertEqual(store.planCandidates(for: day(2)).first { $0.id == big.id }?.plannedAheadMinutes, 360)
+
+        store.togglePlanned(big.id, on: day(4))
+        XCTAssertEqual(left(4), 0, "still listed when already planned on that day")
+    }
+
+    func testReSuggestFollowsTheProjectionDayByDay() {
+        let (store, _, _) = makeStore()
+        let big = bigTicket(store)
+        XCTAssertEqual(store.suggestPlan(for: day(1), calendarBusy: [])?.ticketIDs, [big.id])
+        XCTAssertEqual(store.suggestPlan(for: day(2), calendarBusy: [])?.ticketIDs, [big.id])
+        XCTAssertEqual(store.planCandidates(for: day(3)).first { $0.id == big.id }?.estimateMinutes, 300)
+    }
+
+    func testReSuggestDropsATicketTheEarlierDaysAreExpectedToFinish() {
+        let (store, _, _) = makeStore()
+        let big = bigTicket(store)
+        for offset in 1...4 { store.togglePlanned(big.id, on: day(offset)) }
+
+        XCTAssertEqual(store.suggestPlan(for: day(4), calendarBusy: [])?.ticketIDs, [])
+        XCTAssertEqual(store.suggestPlan(for: day(3), calendarBusy: [])?.ticketIDs, [big.id])
+    }
+
+    func testEarlierDaysWithoutAPlanOrInThePastDoNotCount() {
+        let (store, _, _) = makeStore()
+        let big = bigTicket(store)
+        store.togglePlanned(big.id, on: day(-1))
+        XCTAssertEqual(store.planCandidates(for: day(2)).first { $0.id == big.id }?.estimateMinutes, 1020)
+    }
+
+    func testDaysOffDoNotUseUpATicket() {
+        let (store, _, defaults) = makeStore()
+        defaults.set(5, forKey: PrefKey.workDays)
+        let big = bigTicket(store)
+        let calendar = Calendar.current
+        let saturday = (1...7).map { day($0) }.first { calendar.component(.weekday, from: $0) == 7 }!
+        let sunday = calendar.date(byAdding: .day, value: 1, to: saturday)!
+        let monday = calendar.date(byAdding: .day, value: 2, to: saturday)!
+        store.togglePlanned(big.id, on: saturday)
+        store.togglePlanned(big.id, on: sunday)
+
+        XCTAssertEqual(store.planCandidates(for: monday).first { $0.id == big.id }?.estimateMinutes, 1020)
     }
 }

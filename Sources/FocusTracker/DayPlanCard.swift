@@ -161,7 +161,7 @@ struct DayPlanCard: View {
                 .help("Move to \(nextWorkDayName)")
             }
             Chip(text: candidate.reason.title, color: candidate.reason.color)
-            Text("\(candidate.estimatedByApp ? "~" : "")\(text(candidate.estimateMinutes))\(candidate.trackedMinutes > 0 ? " left" : "")")
+            Text("\(candidate.estimatedByApp ? "~" : "")\(text(candidate.estimateMinutes))\(candidate.trackedMinutes > 0 || candidate.plannedAheadMinutes > 0 ? " left" : "")")
                 .font(.callout.monospacedDigit())
                 .foregroundStyle(.secondary)
                 .help(rowEstimateHelp(candidate))
@@ -231,7 +231,10 @@ struct DayPlanCard: View {
 
     private func rowEstimateHelp(_ candidate: PlanCandidate) -> String {
         let base = candidate.estimatedByApp ? "Estimated by the app: no estimate on this ticket" : "Ticket estimate"
-        return candidate.trackedMinutes > 0 ? "\(base). \(text(candidate.trackedMinutes)) already tracked." : base
+        var notes: [String] = []
+        if candidate.trackedMinutes > 0 { notes.append("\(text(candidate.trackedMinutes)) already tracked") }
+        if candidate.plannedAheadMinutes > 0 { notes.append("\(text(candidate.plannedAheadMinutes)) planned on earlier days") }
+        return ([base] + notes).joined(separator: ". ")
     }
 
     private func capacityBar(planned: Int, capacity: Int, over: Bool) -> some View {

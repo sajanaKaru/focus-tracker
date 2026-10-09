@@ -57,8 +57,11 @@ final class DayPlannerTests: XCTestCase {
         )
     }
 
-    private func rank(_ tickets: [Ticket], carried: Set<UUID> = [], tracked: [UUID: Int] = [:]) -> [PlanCandidate] {
-        DayPlanner.rank(tickets: tickets, carriedOver: carried, now: at(9), settings: PlanSettings(), calendar: cal, trackedMinutes: tracked)
+    private func rank(_ tickets: [Ticket], carried: Set<UUID> = [], tracked: [UUID: Int] = [:], ahead: [UUID: Int] = [:]) -> [PlanCandidate] {
+        DayPlanner.rank(
+            tickets: tickets, carriedOver: carried, now: at(9), settings: PlanSettings(), calendar: cal,
+            trackedMinutes: tracked, plannedAheadMinutes: ahead
+        )
     }
 
     func testRankingOrderFollowsSignalStrength() {
@@ -87,6 +90,45 @@ final class DayPlannerTests: XCTestCase {
         XCTAssertEqual(byTitle["big"]?.estimateMinutes, 1020)
         XCTAssertEqual(byTitle["big"]?.trackedMinutes, 180)
         XCTAssertEqual(byTitle["spent"]?.estimateMinutes, 0)
+    }
+
+    func testRemainingEstimateAlsoExcludesWorkPlannedOnEarlierDays() {
+        let big = ticket("big", estimate: 1200)
+        let ranked = rank([big], tracked: [big.id: 180], ahead: [big.id: 360])
+        XCTAssertEqual(ranked.first?.estimateMinutes, 660)
+        XCTAssertEqual(ranked.first?.plannedAheadMinutes, 360)
+    }
+
+    func testNoPlannedAheadChangesNothing() {
+        let big = ticket("big", estimate: 1200)
+        let ranked = rank([big], tracked: [big.id: 180])
+        XCTAssertEqual(ranked.first?.estimateMinutes, 1020)
+        XCTAssertEqual(ranked.first?.plannedAheadMinutes, 0)
+    }
+
+    // MARK: Planned ahead
+
+    func testPlannedAheadUsesEachDaysCapacityInOrder() {
+        let a = UUID()
+        let day = (capacityMinutes: 360, ticketIDs: [a])
+        XCTAssertEqual(DayPlanner.plannedAhead(plans: [day, day], remaining: [a: 1020])[a], 720)
+        XCTAssertEqual(DayPlanner.plannedAhead(plans: [day, day, day], remaining: [a: 1020])[a], 1020)
+        XCTAssertEqual(DayPlanner.plannedAhead(plans: [day, day, day, day], remaining: [a: 1020])[a], 1020)
+    }
+
+    func testPlannedAheadSharesADaysCapacityBetweenTickets() {
+        let a = UUID(), b = UUID()
+        let result = DayPlanner.plannedAhead(plans: [(capacityMinutes: 360, ticketIDs: [a, b])], remaining: [a: 1000, b: 1000])
+        XCTAssertEqual(result[a], 360)
+        XCTAssertNil(result[b])
+    }
+
+    func testPlannedAheadIgnoresUnknownTicketsAndEmptyDays() {
+        let a = UUID(), unknown = UUID()
+        let result = DayPlanner.plannedAhead(
+            plans: [(capacityMinutes: 0, ticketIDs: [a]), (capacityMinutes: 360, ticketIDs: [unknown])], remaining: [a: 100]
+        )
+        XCTAssertTrue(result.isEmpty)
     }
 
     func testCurrentSprintTicketsRankAboveOtherOpenWork() {

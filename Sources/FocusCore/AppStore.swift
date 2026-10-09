@@ -769,13 +769,35 @@ public final class AppStore {
         // A future day is ranked as of its own start so "due now" means due by then.
         let ranked = DayPlanner.rank(
             tickets: tickets, carriedOver: carried, now: max(now, start), settings: planSettings, calendar: calendar,
-            trackedMinutes: tracked
+            trackedMinutes: tracked, plannedAheadMinutes: plannedAheadMinutes(before: start, tracked: tracked, calendar: calendar)
         )
-        guard planSettings.isWorkingDay(day, calendar: calendar) else {
-            let planned = Set(plan(for: day, calendar: calendar)?.ticketIDs ?? [])
-            return ranked.filter { planned.contains($0.id) }
+        let planned = Set(plan(for: day, calendar: calendar)?.ticketIDs ?? [])
+        guard planSettings.isWorkingDay(day, calendar: calendar) else { return ranked.filter { planned.contains($0.id) } }
+        // Tickets the earlier planned days are expected to finish drop out, unless already planned on this day.
+        return ranked.filter { $0.plannedAheadMinutes == 0 || $0.estimateMinutes > 0 || planned.contains($0.id) }
+    }
+
+    /// Work that planned working days from today up to `start` are expected to use of each ticket.
+    private func plannedAheadMinutes(before start: Date, tracked: [UUID: Int], calendar: Calendar) -> [UUID: Int] {
+        let todayStart = calendar.startOfDay(for: now)
+        guard start > todayStart else { return [:] }
+        let settings = planSettings
+        var remaining: [UUID: Int] = [:]
+        for ticket in tickets where ticket.status != .done {
+            remaining[ticket.id] = DayPlanner.remainingMinutes(of: ticket, tracked: tracked[ticket.id] ?? 0, settings: settings)
         }
-        return ranked
+        let todayRange = dayRange(for: todayStart, calendar: calendar)
+        let trackedToday = Int((entries.reduce(0) { $0 + $1.duration(in: todayRange, at: now) } / 60).rounded())
+        let plans = dayPlans
+            .filter { $0.day >= todayStart && $0.day < start && settings.isWorkingDay($0.day, calendar: calendar) }
+            .sorted { $0.day < $1.day }
+            .map { plan -> (capacityMinutes: Int, ticketIDs: [UUID]) in
+                // Meetings on future days are unknown here; only logged activities reduce the capacity.
+                let capacity = capacity(for: plan.day, calendarBusy: [], calendar: calendar).capacityMinutes
+                let isToday = calendar.isDate(plan.day, inSameDayAs: todayStart)
+                return (isToday ? max(0, capacity - trackedToday) : capacity, plan.ticketIDs)
+            }
+        return DayPlanner.plannedAhead(plans: plans, remaining: remaining)
     }
 
     public func capacity(for day: Date, calendarBusy: [DateInterval], calendar: Calendar = .current) -> Capacity {
@@ -799,7 +821,10 @@ public final class AppStore {
         guard !candidates.isEmpty else { return nil }
         let deferredTicketIDs = plan(for: day, calendar: calendar)?.deferredTicketIDs
         let deferredSet = Set(deferredTicketIDs ?? [])
-        let pickable = candidates.filter { !deferredSet.contains($0.id) && $0.ticket.isQuickCapture != true }
+        let pickable = candidates.filter {
+            !deferredSet.contains($0.id) && $0.ticket.isQuickCapture != true
+                && !($0.plannedAheadMinutes > 0 && $0.estimateMinutes == 0)
+        }
         let capacity = capacity(for: day, calendarBusy: calendarBusy, calendar: calendar)
         var plan = DayPlan(
             day: calendar.startOfDay(for: day),
