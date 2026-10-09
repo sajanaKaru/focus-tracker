@@ -6,6 +6,9 @@ struct MenuBarView: View {
     @Environment(AppStore.self) private var store
     @Environment(\.openWindow) private var openWindow
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var capturing = false
+    @State private var captureKind: QuickCaptureKind = .bug
+    @State private var captureTitle = ""
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -53,6 +56,33 @@ struct MenuBarView: View {
                 }
             }
 
+            Button { capturing.toggle() } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: "bolt.fill").font(.caption).foregroundStyle(Theme.warning)
+                    Text("Unplanned work")
+                    Spacer()
+                    Image(systemName: capturing ? "chevron.up" : "chevron.down").font(.caption2).foregroundStyle(.secondary)
+                }
+            }
+            .buttonStyle(HoverRowStyle())
+
+            if capturing {
+                VStack(alignment: .leading, spacing: 8) {
+                    Picker("Type", selection: $captureKind) {
+                        ForEach(QuickCaptureKind.allCases) { Text($0.title).tag($0) }
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    TextField("What came up?", text: $captureTitle)
+                        .textFieldStyle(.roundedBorder)
+                        .onSubmit(startCapture)
+                    Button("Start timer", action: startCapture)
+                        .buttonStyle(.primary)
+                        .disabled(captureTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+                .padding(.horizontal, 4)
+            }
+
             Divider()
             HStack {
                 Button {
@@ -72,6 +102,12 @@ struct MenuBarView: View {
         }
         .padding(14)
         .frame(width: 320)
+    }
+
+    private func startCapture() {
+        guard store.addQuickCapture(kind: captureKind, title: captureTitle) != nil else { return }
+        captureTitle = ""
+        capturing = false
     }
 
     private func timerCard(

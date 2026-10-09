@@ -4,11 +4,13 @@ import SwiftUI
 enum TodaySheet: Identifiable {
     case add(AddActivitySheet.Choice)
     case calendar
+    case unplanned
 
     var id: String {
         switch self {
         case .add(let choice): "add-\(choice.rawValue)"
         case .calendar: "calendar"
+        case .unplanned: "unplanned"
         }
     }
 }

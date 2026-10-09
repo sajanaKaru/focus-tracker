@@ -118,7 +118,15 @@ struct TodayView: View {
                         subtitle: day.formatted(date: .complete, time: .omitted)
                     )
                     Spacer()
-                    if isToday { AddToTodayMenu(sheet: $sheet) }
+                    if isToday {
+                        HStack(spacing: 10) {
+                            Button { sheet = .unplanned } label: { Label("Unplanned", systemImage: "bolt.fill") }
+                                .buttonStyle(.secondary)
+                                .controlSize(.large)
+                                .help("Log a bug or request that wasn't planned and start its timer")
+                            AddToTodayMenu(sheet: $sheet)
+                        }
+                    }
                 }
 
                 HStack(spacing: 10) {
@@ -187,6 +195,7 @@ struct TodayView: View {
             switch sheet {
             case .add(let choice): AddActivitySheet(choice: choice)
             case .calendar: CalendarImportSheet()
+            case .unplanned: QuickCaptureSheet()
             }
         }
         .sheet(item: $editing) { EditLogSheet(target: $0) }
