@@ -20,6 +20,13 @@ public enum SyncState: Equatable, Sendable {
     case failed(String)
 }
 
+public enum PullRequestsState: Equatable, Sendable {
+    case idle
+    case loading
+    case loaded(Date, total: Int)
+    case failed(String)
+}
+
 public enum IdleTime {
     public static func current() -> TimeInterval {
         CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: CGEventType(rawValue: ~0)!)
@@ -35,6 +42,8 @@ public final class AppStore {
     public private(set) var planComments: [PlanComment] = []
     public private(set) var activities: [Activity] = []
     public private(set) var dayPlans: [DayPlan] = []
+    public private(set) var pullRequests: [PullRequestItem] = []
+    public private(set) var pullRequestsState: PullRequestsState = .idle
     /// Updated every second while a timer runs; views read it to stay live.
     public private(set) var now = Date()
     public private(set) var syncState: SyncState = .idle
@@ -622,14 +631,9 @@ public final class AppStore {
         }
         syncState = .syncing
         do {
-            let repos = Set(
-                (defaults.string(forKey: PrefKey.repos) ?? "")
-                    .split(whereSeparator: { $0 == "," || $0.isWhitespace })
-                    .map { $0.lowercased() }
-            )
             let includePRs = defaults.bool(forKey: PrefKey.includePRs)
             let client = GitHubClient(token: token, transport: transport)
-            let remote = try await client.fetchAssignedIssues(repos: repos, includePullRequests: includePRs)
+            let remote = try await client.fetchAssignedIssues(repos: configuredRepos, includePullRequests: includePRs)
             var enriched = await withProjectFields(remote, client: client)
             let issueFields = await client.fetchIssueFields(for: enriched)
             for i in enriched.indices {
@@ -641,6 +645,52 @@ public final class AppStore {
         } catch {
             syncState = .failed(error.localizedDescription)
         }
+        await refreshPullRequests()
+    }
+
+    /// Lowercased "owner/name" entries from Settings; empty means every repo.
+    private var configuredRepos: Set<String> {
+        Set(
+            (defaults.string(forKey: PrefKey.repos) ?? "")
+                .split(whereSeparator: { $0 == "," || $0.isWhitespace })
+                .map { $0.lowercased() }
+        )
+    }
+
+    // MARK: - My pull requests
+
+    public var pullRequestSections: [PullRequestSection] { PullRequestSection.make(from: pullRequests) }
+
+    /// Loads my open pull requests; a failure keeps the previous list and never touches the ticket sync state.
+    public func refreshPullRequests() async {
+        guard pullRequestsState != .loading else { return }
+        guard let token = tokenProvider(), !token.isEmpty else {
+            pullRequestsState = .failed("Add a GitHub token in Settings.")
+            return
+        }
+        pullRequestsState = .loading
+        do {
+            let client = GitHubClient(token: token, transport: transport)
+            let login = try await client.currentUser()
+            let result = try await client.fetchOpenPullRequests(authoredBy: login)
+            let repos = configuredRepos
+            pullRequests = repos.isEmpty ? result.items : result.items.filter { repos.contains($0.repo.lowercased()) }
+            pullRequestsState = .loaded(Date(), total: result.total)
+        } catch {
+            pullRequestsState = .failed(Self.pullRequestMessage(for: error))
+        }
+    }
+
+    public func refreshPullRequestsIfStale(maxAge: TimeInterval = 120) async {
+        if case .loaded(let date, _) = pullRequestsState, Date().timeIntervalSince(date) < maxAge { return }
+        await refreshPullRequests()
+    }
+
+    private static func pullRequestMessage(for error: Error) -> String {
+        let message = error.localizedDescription
+        var needsAccess = message.localizedCaseInsensitiveContains("not accessible")
+        if case GitHubError.http(let code) = error, code == 403 || code == 404 { needsAccess = true }
+        return needsAccess ? "\(message) Needs Pull requests: Read (and Commit statuses / Checks: Read for CI)." : message
     }
 
     /// Project fields are optional: if they can't be read, tickets keep their previous values.
