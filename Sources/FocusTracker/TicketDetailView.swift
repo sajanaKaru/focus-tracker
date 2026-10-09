@@ -5,6 +5,7 @@ struct TicketDetailView: View {
     @Environment(AppStore.self) private var store
     let ticketID: UUID
     var onPlan: () -> Void = {}
+    @State private var editing: LogEdit?
 
     var body: some View {
         if let ticket = store.ticket(ticketID) {
@@ -90,6 +91,9 @@ struct TicketDetailView: View {
                                 Text(entry.start.formatted(date: .abbreviated, time: .shortened))
                                 Spacer()
                                 Text(Format.short(entry.duration(at: store.now))).monospacedDigit()
+                                Button { editing = .entry(entry) } label: { Image(systemName: "pencil") }
+                                    .buttonStyle(.borderless)
+                                    .help("Edit")
                                 Button { store.deleteEntry(entry.id) } label: { Image(systemName: "trash") }
                                     .buttonStyle(.borderless)
                             }
@@ -109,6 +113,7 @@ struct TicketDetailView: View {
                 }
             }
             .formStyle(.grouped)
+            .sheet(item: $editing) { EditLogSheet(target: $0) }
             .task(id: ticketID) { await store.refreshTicket(ticketID) }
         } else {
             ContentUnavailableView("Ticket not found", systemImage: "questionmark.circle")

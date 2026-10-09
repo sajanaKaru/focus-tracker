@@ -242,6 +242,7 @@ struct ActivityRow: View {
     @Environment(AppStore.self) private var store
     let activity: Activity
     let range: DateInterval
+    var onEdit: (() -> Void)?
 
     var body: some View {
         let end = activity.end?.formatted(date: .omitted, time: .shortened) ?? "now"
@@ -255,6 +256,11 @@ struct ActivityRow: View {
             Text(Format.short(activity.duration(in: range, at: store.now)))
                 .font(.callout.weight(.medium).monospacedDigit())
                 .frame(width: 64, alignment: .trailing)
+            if let onEdit {
+                Button(action: onEdit) { Image(systemName: "pencil") }
+                    .buttonStyle(.borderless)
+                    .help("Edit")
+            }
             Button { store.deleteActivity(activity.id) } label: { Image(systemName: "trash") }
                 .buttonStyle(.borderless)
                 .help("Delete")
@@ -262,5 +268,90 @@ struct ActivityRow: View {
         .font(.callout)
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
+    }
+}
+
+/// A time entry or activity opened for editing.
+enum LogEdit: Identifiable {
+    case entry(TimeEntry)
+    case activity(Activity)
+
+    var id: UUID {
+        switch self {
+        case .entry(let entry): entry.id
+        case .activity(let activity): activity.id
+        }
+    }
+}
+
+struct EditLogSheet: View {
+    @Environment(AppStore.self) private var store
+    @Environment(\.dismiss) private var dismiss
+    let target: LogEdit
+    @State private var kind: Activity.Kind = .other
+    @State private var title = ""
+    @State private var start = Date()
+    @State private var end = Date()
+    @State private var isRunning = false
+
+    private var isActivity: Bool { if case .activity = target { true } else { false } }
+    private var isValid: Bool { start < (isRunning ? Date() : end) }
+
+    var body: some View {
+        Form {
+            Section { Text(isActivity ? "Edit activity" : "Edit time entry").font(.title2.weight(.bold)) }
+
+            if isActivity {
+                Picker("Type", selection: $kind) {
+                    ForEach(Activity.Kind.allCases) { Text($0.title).tag($0) }
+                }
+                TextField("Title", text: $title)
+            }
+
+            DatePicker("Started", selection: $start, in: ...Date(), displayedComponents: [.date, .hourAndMinute])
+            if isRunning {
+                Text("Still running").foregroundStyle(.secondary)
+            } else {
+                DatePicker("Ended", selection: $end, in: ...Date(), displayedComponents: [.date, .hourAndMinute])
+                Text("Duration: \(Format.short(max(0, end.timeIntervalSince(start))))")
+                    .foregroundStyle(isValid ? Color.secondary : Theme.danger)
+            }
+
+            HStack {
+                Spacer()
+                Button(role: .cancel) { dismiss() } label: { ShortcutLabel(title: "Cancel", keys: "⎋") }
+                    .keyboardShortcut(.cancelAction)
+                Button(action: save) { ShortcutLabel(title: "Save", keys: "↩") }
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(!isValid)
+            }
+        }
+        .formStyle(.grouped)
+        .frame(width: 440)
+        .padding()
+        .onAppear(perform: load)
+    }
+
+    private func load() {
+        switch target {
+        case .entry(let entry):
+            start = entry.start
+            isRunning = entry.end == nil
+            end = entry.end ?? Date()
+        case .activity(let activity):
+            kind = activity.kind
+            title = activity.title
+            start = activity.start
+            isRunning = activity.end == nil
+            end = activity.end ?? Date()
+        }
+    }
+
+    private func save() {
+        switch target {
+        case .entry(let entry): store.updateEntry(entry.id, start: start, end: end)
+        case .activity(let activity): store.updateActivity(activity.id, kind: kind, title: title, start: start, end: end)
+        }
+        dismiss()
     }
 }

@@ -465,6 +465,27 @@ public final class AppStore {
         save()
     }
 
+    /// Changes the times of an entry; `end` is ignored while the entry is still running.
+    public func updateEntry(_ id: UUID, start: Date, end: Date?) {
+        guard let i = entries.firstIndex(where: { $0.id == id }) else { return }
+        let newEnd = entries[i].end == nil ? nil : end
+        guard start < (newEnd ?? now) else { return }
+        entries[i].start = start
+        entries[i].end = newEnd
+        save()
+    }
+
+    public func updateActivity(_ id: UUID, kind: Activity.Kind, title: String, start: Date, end: Date?) {
+        guard let i = activities.firstIndex(where: { $0.id == id }) else { return }
+        let newEnd = activities[i].end == nil ? nil : end
+        guard start < (newEnd ?? now) else { return }
+        activities[i].kind = kind
+        activities[i].title = Self.activityTitle(title, kind: kind)
+        activities[i].start = start
+        activities[i].end = newEnd
+        save()
+    }
+
     // MARK: - Activities (calls, meetings)
 
     /// Starts a live timer for a non-ticket activity; it replaces any running timer.

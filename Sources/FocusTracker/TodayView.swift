@@ -6,6 +6,7 @@ struct TodayView: View {
     @Environment(AppStore.self) private var store
     @Binding var selectedTicketID: UUID?
     @State private var sheet: TodaySheet?
+    @State private var editing: LogEdit?
     /// nil follows the current day, including across midnight.
     @State private var chosenDay: Date?
     @State private var copied = false
@@ -182,6 +183,7 @@ struct TodayView: View {
             case .calendar: CalendarImportSheet()
             }
         }
+        .sheet(item: $editing) { EditLogSheet(target: $0) }
     }
 
     @ViewBuilder
@@ -196,7 +198,7 @@ struct TodayView: View {
                     .padding(.vertical, 10)
             }
         case .activity(let activity):
-            ActivityRow(activity: activity, range: range)
+            ActivityRow(activity: activity, range: range) { editing = .activity(activity) }
         }
     }
 
@@ -211,6 +213,12 @@ struct TodayView: View {
             Text(Format.short(entry.duration(in: range, at: store.now)))
                 .font(.callout.weight(.medium).monospacedDigit())
                 .frame(width: 64, alignment: .trailing)
+            Button { editing = .entry(entry) } label: { Image(systemName: "pencil") }
+                .buttonStyle(.borderless)
+                .help("Edit")
+            Button { store.deleteEntry(entry.id) } label: { Image(systemName: "trash") }
+                .buttonStyle(.borderless)
+                .help("Delete")
         }
         .font(.callout)
         .padding(.horizontal, 14)
