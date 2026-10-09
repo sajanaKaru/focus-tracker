@@ -26,6 +26,10 @@ struct DayPlanCard: View {
         let capacity = store.capacity(for: day, calendarBusy: calendarBusy)
         let planned = DayPlanner.plannedMinutes(candidates, ids: plannedIDs)
         let over = planned > capacity.capacityMinutes
+        let isToday = Calendar.current.isDate(day, inSameDayAs: store.now)
+        let load = store.dayLoad(for: day, calendarBusy: calendarBusy)
+        let deferIDs = isToday ? Set(store.deferCandidates(for: day, calendarBusy: calendarBusy)) : []
+        let fresh = isToday ? store.newSincePlanning(for: day) : []
 
         VStack(alignment: .leading, spacing: 10) {
             HStack {
@@ -46,7 +50,9 @@ struct DayPlanCard: View {
                     Text("\(text(capacity.freeMinutes)) free after meetings").foregroundStyle(.secondary)
                 }
                 .font(.caption.monospacedDigit())
-                if over {
+                if isToday {
+                    liveSection(load)
+                } else if over {
                     Label("Over capacity by \(text(planned - capacity.capacityMinutes))", systemImage: "exclamationmark.triangle.fill")
                         .font(.caption).foregroundStyle(Theme.warning)
                 }
@@ -56,6 +62,7 @@ struct DayPlanCard: View {
                 if let calendarNote { Text(calendarNote).font(.caption).foregroundStyle(.secondary) }
             }
 
+            if !fresh.isEmpty { newStrip(fresh) }
             if candidates.isEmpty {
                 EmptyHint(text: "No open tickets to plan. Sync GitHub or add a ticket.", symbol: "checklist")
             } else {
@@ -74,7 +81,7 @@ struct DayPlanCard: View {
                     VStack(spacing: 0) {
                         ForEach(Array(visible.enumerated()), id: \.element.id) { index, candidate in
                             if index > 0 { Divider() }
-                            row(candidate, planned: plannedIDs.contains(candidate.id))
+                            row(candidate, planned: plannedIDs.contains(candidate.id), canDefer: deferIDs.contains(candidate.id))
                         }
                     }
                     .cardStyle(padding: 0)
@@ -122,7 +129,7 @@ struct DayPlanCard: View {
         }
     }
 
-    private func row(_ candidate: PlanCandidate, planned: Bool) -> some View {
+    private func row(_ candidate: PlanCandidate, planned: Bool, canDefer: Bool) -> some View {
         HStack(spacing: 10) {
             Toggle("", isOn: Binding(get: { planned }, set: { _ in store.togglePlanned(candidate.id, on: day) }))
                 .labelsHidden()
@@ -132,6 +139,13 @@ struct DayPlanCard: View {
                 Text(candidate.ticket.displayKey).font(.caption).foregroundStyle(.secondary)
             }
             Spacer()
+            if canDefer {
+                Button { store.deferToTomorrow(candidate.id, from: day) } label: {
+                    Label("Tomorrow", systemImage: "arrow.turn.down.right")
+                }
+                .buttonStyle(.secondary)
+                .help("Move to tomorrow")
+            }
             Chip(text: candidate.reason.title, color: candidate.reason.color)
             Text("\(candidate.estimatedByApp ? "~" : "")\(text(candidate.estimateMinutes))")
                 .font(.callout.monospacedDigit())
@@ -142,6 +156,61 @@ struct DayPlanCard: View {
         .padding(.vertical, 8)
         .contentShape(Rectangle())
         .onTapGesture { selectedTicketID = candidate.id }
+    }
+
+    private func liveSection(_ load: DayLoad) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 14) {
+                liveStat("Planned done", load.plannedTrackedMinutes)
+                liveStat("Planned left", load.remainingPlannedMinutes)
+                liveStat("Unplanned", load.unplannedMinutes)
+                Spacer()
+                Text(load.isOverloaded ? "\(text(load.overloadMinutes)) over" : "\(text(load.remainingTodayMinutes)) left today")
+                    .foregroundStyle(load.isOverloaded ? Theme.warning : Color.primary)
+            }
+            .font(.caption.monospacedDigit())
+            if load.isOverloaded {
+                Label("Over by \(text(load.overloadMinutes)). Defer something?", systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption).foregroundStyle(Theme.warning)
+            }
+        }
+    }
+
+    private func liveStat(_ title: String, _ minutes: Int) -> some View {
+        HStack(spacing: 4) {
+            Text(title).foregroundStyle(.secondary)
+            Text(text(minutes))
+        }
+    }
+
+    private func newStrip(_ fresh: [PlanCandidate]) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("NEW SINCE PLANNING")
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.secondary)
+            VStack(spacing: 0) {
+                ForEach(Array(fresh.prefix(5).enumerated()), id: \.element.id) { index, candidate in
+                    if index > 0 { Divider() }
+                    HStack(spacing: 10) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(candidate.ticket.title).lineLimit(1)
+                            Text(candidate.ticket.displayKey).font(.caption).foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Button("Add to plan") { store.togglePlanned(candidate.id, on: day) }.buttonStyle(.secondary)
+                        Button("Ignore") { store.ignoreNew(candidate.id, on: day) }.buttonStyle(.secondary)
+                    }
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 8)
+                    .contentShape(Rectangle())
+                    .onTapGesture { selectedTicketID = candidate.id }
+                }
+            }
+            .cardStyle(padding: 0)
+            if fresh.count > 5 {
+                Text("+\(fresh.count - 5) more").font(.caption).foregroundStyle(.secondary)
+            }
+        }
     }
 
     private func capacityBar(planned: Int, capacity: Int, over: Bool) -> some View {
