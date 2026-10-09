@@ -16,6 +16,19 @@ private final class Counter: @unchecked Sendable {
     var failing = false
 }
 
+private final class CancelSwitch: @unchecked Sendable { var on = false }
+
+private struct CancellableTransport: HTTPTransport {
+    let cancel: CancelSwitch
+
+    func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+        if cancel.on { throw URLError(.cancelled) }
+        let body = request.url?.path == "/user" ? #"{"login":"octo"}"# : #"{"data":{"search":{"issueCount":0,"nodes":[]}}}"#
+        let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: [:])!
+        return (Data(body.utf8), response)
+    }
+}
+
 @MainActor
 final class PullRequestStoreTests: XCTestCase {
     private let pullRequestsJSON = """
@@ -125,5 +138,33 @@ final class PullRequestStoreTests: XCTestCase {
         guard case .succeeded(_, let count) = store.syncState else { return XCTFail("expected the ticket sync to succeed") }
         XCTAssertEqual(count, 0)
         guard case .failed = store.pullRequestsState else { return XCTFail("expected the pull request load to fail") }
+    }
+
+    func testACancelledFirstRefreshLeavesTheStateIdle() async {
+        let defaults = UserDefaults(suiteName: "ft-\(UUID().uuidString)")!
+        let cancel = CancelSwitch()
+        cancel.on = true
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("ft-\(UUID().uuidString).json")
+        let store = AppStore(storeURL: url, defaults: defaults, transport: CancellableTransport(cancel: cancel), tokenProvider: { "t" })
+
+        await store.refreshPullRequests()
+
+        XCTAssertEqual(store.pullRequestsState, .idle)
+        XCTAssertTrue(store.pullRequests.isEmpty)
+    }
+
+    func testACancelledRefreshKeepsTheLoadedState() async {
+        let defaults = UserDefaults(suiteName: "ft-\(UUID().uuidString)")!
+        let cancel = CancelSwitch()
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("ft-\(UUID().uuidString).json")
+        let store = AppStore(storeURL: url, defaults: defaults, transport: CancellableTransport(cancel: cancel), tokenProvider: { "t" })
+
+        await store.refreshPullRequests()
+        let before = store.pullRequestsState
+
+        cancel.on = true
+        await store.refreshPullRequests()
+
+        XCTAssertEqual(store.pullRequestsState, before)
     }
 }

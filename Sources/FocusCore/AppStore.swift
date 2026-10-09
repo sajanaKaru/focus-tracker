@@ -668,6 +668,7 @@ public final class AppStore {
             pullRequestsState = .failed("Add a GitHub token in Settings.")
             return
         }
+        let previous = pullRequestsState
         pullRequestsState = .loading
         do {
             let client = GitHubClient(token: token, transport: transport)
@@ -677,13 +678,18 @@ public final class AppStore {
             pullRequests = repos.isEmpty ? result.items : result.items.filter { repos.contains($0.repo.lowercased()) }
             pullRequestsState = .loaded(Date(), total: result.total)
         } catch {
-            pullRequestsState = .failed(Self.pullRequestMessage(for: error))
+            // A cancelled request (for example the tab closing) is not a failure; keep what was shown.
+            pullRequestsState = Self.isCancellation(error) ? previous : .failed(Self.pullRequestMessage(for: error))
         }
     }
 
     public func refreshPullRequestsIfStale(maxAge: TimeInterval = 120) async {
         if case .loaded(let date, _) = pullRequestsState, Date().timeIntervalSince(date) < maxAge { return }
         await refreshPullRequests()
+    }
+
+    private static func isCancellation(_ error: Error) -> Bool {
+        error is CancellationError || (error as? URLError)?.code == .cancelled
     }
 
     private static func pullRequestMessage(for error: Error) -> String {
