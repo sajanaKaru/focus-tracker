@@ -118,6 +118,28 @@ public struct IssueType: Codable, Hashable, Sendable {
     }
 }
 
+public enum QuickCaptureKind: String, CaseIterable, Identifiable, Sendable {
+    case bug, request, interrupt
+
+    public var id: String { rawValue }
+
+    public var title: String {
+        switch self {
+        case .bug: "Bug"
+        case .request: "Request"
+        case .interrupt: "Interrupt"
+        }
+    }
+
+    public var symbol: String {
+        switch self {
+        case .bug: "ladybug.fill"
+        case .request: "bubble.left.fill"
+        case .interrupt: "bolt.fill"
+        }
+    }
+}
+
 public struct Ticket: Identifiable, Codable, Hashable, Sendable {
     public var id: UUID
     public var title: String
@@ -137,6 +159,8 @@ public struct Ticket: Identifiable, Codable, Hashable, Sendable {
     public var createdAt: Date
     public var updatedAt: Date
     public var github: GitHubRef?
+    /// Created from the Unplanned button rather than synced from GitHub.
+    public var isQuickCapture: Bool?
 
     public init(
         id: UUID = UUID(),
@@ -154,7 +178,8 @@ public struct Ticket: Identifiable, Codable, Hashable, Sendable {
         estimateMinutes: Int? = nil,
         createdAt: Date = Date(),
         updatedAt: Date = Date(),
-        github: GitHubRef? = nil
+        github: GitHubRef? = nil,
+        isQuickCapture: Bool? = nil
     ) {
         self.id = id
         self.title = title
@@ -172,6 +197,7 @@ public struct Ticket: Identifiable, Codable, Hashable, Sendable {
         self.createdAt = createdAt
         self.updatedAt = updatedAt
         self.github = github
+        self.isQuickCapture = isQuickCapture
     }
 
     public var displayKey: String {
@@ -398,11 +424,18 @@ public struct DayPlan: Identifiable, Codable, Hashable, Sendable {
     /// Start of the day.
     public var day: Date
     public var ticketIDs: [UUID]
+    /// When the plan was suggested; nil for plans saved before this field existed.
+    public var createdAt: Date?
+    /// Tickets moved to the next day; they rank as carried over there.
+    public var deferredTicketIDs: [UUID]?
+    /// New GitHub tickets the user chose not to add to this day.
+    public var ignoredNewTicketIDs: [UUID]?
 
     public var id: Date { day }
 
-    public init(day: Date, ticketIDs: [UUID] = []) {
+    public init(day: Date, ticketIDs: [UUID] = [], createdAt: Date? = nil) {
         self.day = day
         self.ticketIDs = ticketIDs
+        self.createdAt = createdAt
     }
 }
