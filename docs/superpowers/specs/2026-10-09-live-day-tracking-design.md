@@ -27,11 +27,11 @@ Out of scope: time blocking on a timeline, writing anything back to GitHub, noti
 ### Quick capture
 - "Unplanned" button on the Today view and in the menu bar.
 - Sheet: type (Bug, Request, Interrupt) and title.
-- Creates a local `Ticket` (`isQuickCapture = true`, label equals the type) and starts its timer. Not added to the plan, so its time counts as unplanned.
-- It can later be linked to a GitHub issue or stay local.
+- Creates a local `Ticket` (`isQuickCapture = true`, label equals the type) and starts its timer. Not added to the plan, so its time counts as unplanned. Quick captures are never auto-picked into a plan; they stay listed and can be ticked manually.
+- It stays local in A1. Linking it to a GitHub issue is out of scope; if the same issue is later synced it becomes a separate ticket.
 
-### Live capacity bar (Plan card)
-Shows done planned time, remaining planned work, unplanned time, and remaining today. The bar turns amber when remaining today < 0, with the text "N over. Defer something?".
+### Live capacity readout (Plan card)
+The existing plan-vs-capacity bar is unchanged. Below it, a text readout shows done planned time, remaining planned work, unplanned time, and remaining today, turning amber when remaining today < 0 with the text "N over. Defer something?". It is shown as an overload warning on working days only.
 
 ### Defer
 When overloaded, the lowest-ranked planned, not-started tickets show "Move to tomorrow". It removes the ticket from today's plan and records it in the plan's `deferredTicketIDs`; the carry-over logic treats deferred tickets like unfinished planned ones, so they rank as "Carried over" on the next day. Only the lowest-ranked tickets needed to cover the overload get the action.
