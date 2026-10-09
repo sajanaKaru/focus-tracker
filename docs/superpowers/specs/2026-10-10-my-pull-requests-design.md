@@ -16,7 +16,7 @@ Out (later): PRs where I am asked to review, merge or re-request-review actions,
 
 - `PullRequestItem`: `id` (`repo#number` lowercased), `repo` (`owner/name`), `number`, `title`, `url`, `isDraft`, `review: ReviewState`, `ci: CIState`, `hasConflicts`, `createdAt`, `updatedAt`.
 - `ReviewState`: `approved`, `changesRequested`, `waiting`.
-- `CIState`: `passing`, `failing`, `pending`, `none`.
+- `CIState`: `passing`, `failing`, `pending`, `noChecks`.
 - `PullRequestGroup`: `needsAction`, `waiting`, `approved`, `drafts`, in this display order.
 
 ### Mapping from GitHub
@@ -29,7 +29,7 @@ Out (later): PRs where I am asked to review, merge or re-request-review actions,
 | `commits(last:1).nodes[0].commit.statusCheckRollup.state` | `SUCCESS` | `passing` |
 | | `FAILURE`, `ERROR` | `failing` |
 | | `PENDING`, `EXPECTED` | `pending` |
-| | missing | `none` |
+| | missing | `noChecks` |
 | `mergeable` | `CONFLICTING` | `hasConflicts = true` |
 | | `MERGEABLE`, `UNKNOWN` | `hasConflicts = false` |
 
@@ -57,9 +57,10 @@ Sorting inside a group: `updatedAt` descending, except `waiting`, which is `upda
 `AppStore` (in memory only, never written to `data.json`):
 
 - `pullRequests: [PullRequestItem]`, `pullRequestsState: PullRequestsState` (`idle`, `loading`, `loaded(Date, total: Int)`, `failed(String)`).
-- `refreshPullRequests() async`: needs a token (else `failed("Add a GitHub token in Settings.")`); fetches; applies the repo filter from `PrefKey.repos` (case-insensitive `owner/name`; empty means all repos); sets state. Ignores a call while already `loading`.
+- `refreshPullRequests() async`: needs a token (else `failed("Add a GitHub token in Settings.")`); fetches; applies the repo filter from `PrefKey.repos` (case-insensitive `owner/name`; empty means all repos); sets state. Ignores a call while already `loading`. A 403/404 or "not accessible" error gets the hint about the required token access.
+- `refreshPullRequestsIfStale(maxAge: 120) async` refreshes unless the data was loaded less than `maxAge` seconds ago.
 - `syncGitHub()` calls `refreshPullRequests()` after the ticket sync. A failure there only sets `pullRequestsState` and never changes `syncState`.
-- `pullRequestGroups: [(PullRequestGroup, [PullRequestItem])]` returns non-empty groups in display order with the sorting above.
+- `pullRequestSections: [PullRequestSection]` (`group`, `items`) returns non-empty groups in display order with the sorting above.
 
 ## UI
 
@@ -72,7 +73,7 @@ Sorting inside a group: `updatedAt` descending, except `waiting`, which is `upda
 
 - No token: message in the tab, no request.
 - Network or GraphQL failure: message and the previous list stays visible.
-- Unknown enum values from GitHub map to the neutral case (`waiting`, `none`) so a new GitHub value never breaks the tab.
+- Unknown enum values from GitHub map to the neutral case (`waiting`, `noChecks`) so a new GitHub value never breaks the tab.
 
 ## Testing
 
