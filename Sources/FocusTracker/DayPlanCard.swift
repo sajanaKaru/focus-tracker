@@ -27,8 +27,9 @@ struct DayPlanCard: View {
         let planned = DayPlanner.plannedMinutes(candidates, ids: plannedIDs)
         let over = planned > capacity.capacityMinutes
         let isToday = Calendar.current.isDate(day, inSameDayAs: store.now)
+        let workingDay = store.planSettings.isWorkingDay(day)
         let load = store.dayLoad(for: day, calendarBusy: calendarBusy)
-        let deferIDs = isToday ? Set(store.deferCandidates(for: day, calendarBusy: calendarBusy)) : []
+        let deferIDs = isToday && workingDay ? Set(store.deferCandidates(for: day, calendarBusy: calendarBusy)) : []
         let fresh = isToday ? store.newSincePlanning(for: day) : []
 
         VStack(alignment: .leading, spacing: 10) {
@@ -51,7 +52,7 @@ struct DayPlanCard: View {
                 }
                 .font(.caption.monospacedDigit())
                 if isToday {
-                    liveSection(load)
+                    liveSection(load, workingDay: workingDay)
                 } else if over {
                     Label("Over capacity by \(text(planned - capacity.capacityMinutes))", systemImage: "exclamationmark.triangle.fill")
                         .font(.caption).foregroundStyle(Theme.warning)
@@ -158,18 +159,20 @@ struct DayPlanCard: View {
         .onTapGesture { selectedTicketID = candidate.id }
     }
 
-    private func liveSection(_ load: DayLoad) -> some View {
+    private func liveSection(_ load: DayLoad, workingDay: Bool) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 14) {
                 liveStat("Planned done", load.plannedTrackedMinutes)
                 liveStat("Planned left", load.remainingPlannedMinutes)
                 liveStat("Unplanned", load.unplannedMinutes)
                 Spacer()
-                Text(load.isOverloaded ? "\(text(load.overloadMinutes)) over" : "\(text(load.remainingTodayMinutes)) left today")
-                    .foregroundStyle(load.isOverloaded ? Theme.warning : Color.primary)
+                if workingDay {
+                    Text(load.isOverloaded ? "\(text(load.overloadMinutes)) over" : "\(text(load.remainingTodayMinutes)) left today")
+                        .foregroundStyle(load.isOverloaded ? Theme.warning : Color.primary)
+                }
             }
             .font(.caption.monospacedDigit())
-            if load.isOverloaded {
+            if workingDay && load.isOverloaded {
                 Label("Over by \(text(load.overloadMinutes)). Defer something?", systemImage: "exclamationmark.triangle.fill")
                     .font(.caption).foregroundStyle(Theme.warning)
             }

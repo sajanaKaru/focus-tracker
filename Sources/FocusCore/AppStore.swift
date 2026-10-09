@@ -755,10 +755,12 @@ public final class AppStore {
         dayPlans.first { calendar.isDate($0.day, inSameDayAs: day) }
     }
 
-    /// Ranked suggestions for `day`; tickets from the most recent earlier plan that are still open rank as carried over.
+    /// Ranked suggestions for `day`; tickets from the most recent earlier non-empty plan that are still open rank as carried over.
     public func planCandidates(for day: Date, calendar: Calendar = .current) -> [PlanCandidate] {
         let start = calendar.startOfDay(for: day)
-        let earlier = dayPlans.filter { $0.day < start }.max { $0.day < $1.day }
+        let earlier = dayPlans
+            .filter { $0.day < start && !($0.ticketIDs.isEmpty && ($0.deferredTicketIDs ?? []).isEmpty) }
+            .max { $0.day < $1.day }
         let earlierIDs = (earlier?.ticketIDs ?? []) + (earlier?.deferredTicketIDs ?? [])
         let carried = Set(earlierIDs.filter { ticket($0).map { $0.status != .done } ?? false })
         // A future day is ranked as of its own start so "due now" means due by then.
@@ -779,18 +781,22 @@ public final class AppStore {
         plan(for: day, calendar: calendar) ?? suggestPlan(for: day, calendarBusy: calendarBusy, calendar: calendar)
     }
 
-    /// Builds the plan from the ranked suggestions, replacing any existing plan for the day.
+    /// Builds the plan from the ranked suggestions, replacing any existing plan for the day; preserves existing defers.
     @discardableResult
     public func suggestPlan(for day: Date, calendarBusy: [DateInterval], calendar: Calendar = .current) -> DayPlan? {
         let candidates = planCandidates(for: day, calendar: calendar)
         guard !candidates.isEmpty else { return nil }
+        let deferredTicketIDs = plan(for: day, calendar: calendar)?.deferredTicketIDs
+        let deferredSet = Set(deferredTicketIDs ?? [])
+        let pickable = candidates.filter { !deferredSet.contains($0.id) && $0.ticket.isQuickCapture != true }
         let capacity = capacity(for: day, calendarBusy: calendarBusy, calendar: calendar)
-        let plan = DayPlan(
+        var plan = DayPlan(
             day: calendar.startOfDay(for: day),
             ticketIDs: planSettings.isWorkingDay(day, calendar: calendar)
-                ? DayPlanner.autoPick(candidates, capacityMinutes: capacity.capacityMinutes) : [],
+                ? DayPlanner.autoPick(pickable, capacityMinutes: capacity.capacityMinutes) : [],
             createdAt: Date()
         )
+        plan.deferredTicketIDs = deferredTicketIDs
         dayPlans.removeAll { calendar.isDate($0.day, inSameDayAs: day) }
         dayPlans.append(plan)
         save()
@@ -803,6 +809,7 @@ public final class AppStore {
                 dayPlans[index].ticketIDs.remove(at: position)
             } else {
                 dayPlans[index].ticketIDs.append(ticketID)
+                dayPlans[index].deferredTicketIDs?.removeAll { $0 == ticketID }
             }
         } else {
             dayPlans.append(DayPlan(day: calendar.startOfDay(for: day), ticketIDs: [ticketID]))
@@ -850,6 +857,10 @@ public final class AppStore {
         var deferred = dayPlans[i].deferredTicketIDs ?? []
         if !deferred.contains(ticketID) { deferred.append(ticketID) }
         dayPlans[i].deferredTicketIDs = deferred
+        let next = planSettings.nextWorkingDay(after: day, calendar: calendar)
+        if let j = dayPlans.firstIndex(where: { calendar.isDate($0.day, inSameDayAs: next) }), !dayPlans[j].ticketIDs.contains(ticketID) {
+            dayPlans[j].ticketIDs.append(ticketID)
+        }
         save()
     }
 

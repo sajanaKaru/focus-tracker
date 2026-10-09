@@ -147,4 +147,80 @@ final class LiveDayStoreTests: XCTestCase {
         store.ensurePlan(for: Date(), calendarBusy: [])
         XCTAssertTrue(store.newSincePlanning(for: Date()).isEmpty)
     }
+
+    // MARK: Re-suggest, quick capture and defer integration
+
+    func testResuggestKeepsDefers() {
+        let (store, _, _) = makeStore()
+        let a = addTicket(store, "a", .urgent, minutes: 120)
+        let b = addTicket(store, "b", .high, minutes: 120)
+        let c = addTicket(store, "c", .medium, minutes: 120)
+        store.ensurePlan(for: Date(), calendarBusy: [])
+        store.deferToTomorrow(c.id, from: Date())
+
+        store.suggestPlan(for: Date(), calendarBusy: [])
+
+        XCTAssertEqual(store.plan(for: Date())?.ticketIDs, [a.id, b.id])
+        XCTAssertEqual(store.plan(for: Date())?.deferredTicketIDs, [c.id])
+    }
+
+    func testQuickCaptureIsNotAutoPicked() {
+        let (store, _, _) = makeStore()
+        let capture = try! XCTUnwrap(store.addQuickCapture(kind: .bug, title: "x"))
+        store.stop()
+        let a = addTicket(store, "a", .none, minutes: 60)
+
+        store.ensurePlan(for: Date(), calendarBusy: [])
+
+        XCTAssertEqual(store.plan(for: Date())?.ticketIDs, [a.id])
+        XCTAssertTrue(store.planCandidates(for: Date()).contains { $0.id == capture.id })
+    }
+
+    func testDeferAddsToAnExistingNextDayPlan() {
+        let (store, _, _) = makeStore()
+        addTicket(store, "a", .urgent, minutes: 120)
+        addTicket(store, "b", .high, minutes: 120)
+        let c = addTicket(store, "c", .medium, minutes: 120)
+        store.ensurePlan(for: Date(), calendarBusy: [])
+
+        let tomorrow = Calendar.current.date(byAdding: .day, value: 1, to: Date())!
+        let other = addTicket(store, "other", .none, minutes: 30)
+        store.togglePlanned(other.id, on: tomorrow)
+
+        store.deferToTomorrow(c.id, from: Date())
+
+        XCTAssertTrue(store.plan(for: tomorrow)?.ticketIDs.contains(c.id) == true)
+    }
+
+    func testDeferSurvivesAnEmptyInterveningPlan() {
+        let (store, _, _) = makeStore()
+        addTicket(store, "a", .urgent, minutes: 120)
+        addTicket(store, "b", .high, minutes: 120)
+        let c = addTicket(store, "c", .medium, minutes: 120)
+        store.ensurePlan(for: Date(), calendarBusy: [])
+        store.deferToTomorrow(c.id, from: Date())
+
+        let tomorrow = Calendar.current.date(byAdding: .day, value: 1, to: Date())!
+        let a = store.tickets.first { $0.title == "a" }!
+        store.togglePlanned(a.id, on: tomorrow)
+        store.togglePlanned(a.id, on: tomorrow)
+        XCTAssertEqual(store.plan(for: tomorrow)?.ticketIDs, [])
+
+        let dayAfterTomorrow = Calendar.current.date(byAdding: .day, value: 2, to: Date())!
+        XCTAssertEqual(store.planCandidates(for: dayAfterTomorrow).first { $0.ticket.id == c.id }?.reason, .carriedOver)
+    }
+
+    func testTogglingADeferredTicketBackOnRemovesItFromDeferredTicketIDs() {
+        let (store, _, _) = makeStore()
+        addTicket(store, "a", .urgent, minutes: 120)
+        addTicket(store, "b", .high, minutes: 120)
+        let c = addTicket(store, "c", .medium, minutes: 120)
+        store.ensurePlan(for: Date(), calendarBusy: [])
+        store.deferToTomorrow(c.id, from: Date())
+
+        store.togglePlanned(c.id, on: Date())
+
+        XCTAssertTrue((store.plan(for: Date())?.deferredTicketIDs ?? []).isEmpty)
+        XCTAssertTrue(store.plan(for: Date())?.ticketIDs.contains(c.id) == true)
+    }
 }
