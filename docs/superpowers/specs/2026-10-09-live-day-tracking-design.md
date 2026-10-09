@@ -20,7 +20,7 @@ Out of scope: time blocking on a timeline, writing anything back to GitHub, noti
 - **Unplanned time (day D)**: tracked time on tickets not in D's plan, plus ad-hoc `Activity` entries (no `calendarEventID`) in D. Calendar-imported meetings are not unplanned; capacity already subtracts them.
 - Unplanned is **derived** from `TimeEntry`, `Activity` and `DayPlan`. It is never stored.
 - **Remaining planned work** = sum over planned, not-Done tickets of max(0, estimate − tracked time today and earlier). Estimate = `effectiveEstimateMinutes`, else the default estimate.
-- **Remaining today** = capacity − tracked time today − remaining planned work. Negative means overloaded.
+- **Remaining today** = capacity − ticket time tracked today − remaining planned work. Negative means overloaded. Ad-hoc activities are not subtracted again: capacity already excludes logged activities.
 
 ## Phase A1 — Live day
 
@@ -34,10 +34,10 @@ Out of scope: time blocking on a timeline, writing anything back to GitHub, noti
 Shows done planned time, remaining planned work, unplanned time, and remaining today. The bar turns amber when remaining today < 0, with the text "N over. Defer something?".
 
 ### Defer
-When overloaded, the lowest-ranked planned, not-started tickets show "Move to tomorrow". It unchecks the ticket in today's plan; the existing carry-over logic surfaces it tomorrow.
+When overloaded, the lowest-ranked planned, not-started tickets show "Move to tomorrow". It removes the ticket from today's plan and records it in the plan's `deferredTicketIDs`; the carry-over logic treats deferred tickets like unfinished planned ones, so they rank as "Carried over" on the next day. Only the lowest-ranked tickets needed to cover the overload get the action.
 
 ### New since planning
-After a GitHub sync, issues that were not candidates when today's plan was created appear in a "New since planning" strip with "Add to plan" and "Ignore". Ignored ids are kept per day. Work started on such a ticket without adding it counts as unplanned.
+After a GitHub sync, GitHub tickets first synced after today's plan was created (`Ticket.createdAt > DayPlan.createdAt`) appear in a "New since planning" strip with "Add to plan" and "Ignore". Ignored ids are kept per day. Work started on such a ticket without adding it counts as unplanned.
 
 ## Phase A2 — End-of-day review
 
@@ -58,7 +58,8 @@ Pure functions in `FocusCore`; each adjustment is shown in the UI and can be swi
 ## Data
 
 - `Ticket.isQuickCapture: Bool?` (optional, decoded as false when missing, so existing `data.json` loads).
-- `DayPlan.ignoredNewTicketIDs: [UUID]?` (optional, same reason).
+- `DayPlan.createdAt: Date?` (set when the plan is suggested; plans without it show no "new since planning" strip).
+- `DayPlan.deferredTicketIDs: [UUID]?` and `DayPlan.ignoredNewTicketIDs: [UUID]?` (optional, same reason).
 - Settings (`PrefKey`): wrap-up reminder time, unplanned buffer mode (auto/manual/off), estimate correction on/off.
 - Nothing else is stored.
 
