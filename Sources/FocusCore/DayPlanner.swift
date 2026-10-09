@@ -68,6 +68,21 @@ public struct PlanCandidate: Identifiable, Equatable, Sendable {
     public var id: UUID { ticket.id }
 }
 
+/// How today is going: planned vs. unplanned time and what is left of the capacity.
+public struct DayLoad: Equatable, Sendable {
+    /// Ticket time today on planned tickets.
+    public var plannedTrackedMinutes: Int
+    /// Ticket time today off the plan plus ad-hoc (non-calendar) activities.
+    public var unplannedMinutes: Int
+    /// Estimate left on planned, unfinished tickets.
+    public var remainingPlannedMinutes: Int
+    /// Capacity left today; negative when overloaded.
+    public var remainingTodayMinutes: Int
+
+    public var isOverloaded: Bool { remainingTodayMinutes < 0 }
+    public var overloadMinutes: Int { max(0, -remainingTodayMinutes) }
+}
+
 public enum DayPlanner {
     public static func capacity(day: DateInterval, busy: [DateInterval], settings: PlanSettings, calendar: Calendar = .current) -> Capacity {
         guard settings.isWorkingDay(day.start, calendar: calendar) else { return Capacity(freeMinutes: 0, capacityMinutes: 0) }
@@ -149,6 +164,49 @@ public enum DayPlanner {
 
     public static func plannedMinutes(_ candidates: [PlanCandidate], ids: Set<UUID>) -> Int {
         candidates.filter { ids.contains($0.id) }.reduce(0) { $0 + $1.estimateMinutes }
+    }
+
+    public static func load(
+        plannedIDs: Set<UUID>, tickets: [Ticket], entries: [TimeEntry], activities: [Activity],
+        capacityMinutes: Int, day: DateInterval, now: Date, settings: PlanSettings
+    ) -> DayLoad {
+        func minutes(_ seconds: TimeInterval) -> Int { Int((seconds / 60).rounded()) }
+
+        let byTicket = Dictionary(grouping: entries, by: \.ticketID)
+        let todayByTicket = byTicket.mapValues { $0.reduce(0) { $0 + $1.duration(in: day, at: now) } }
+        let totalByTicket = byTicket.mapValues { $0.reduce(0) { $0 + $1.duration(at: now) } }
+
+        let ticketToday = todayByTicket.values.reduce(0, +)
+        let plannedToday = plannedIDs.reduce(0.0) { $0 + (todayByTicket[$1] ?? 0) }
+        let adHoc = activities.filter { $0.calendarEventID == nil }.reduce(0.0) { $0 + $1.duration(in: day, at: now) }
+
+        var remainingPlanned = 0
+        for ticket in tickets where plannedIDs.contains(ticket.id) && ticket.status != .done {
+            let estimate = ticket.effectiveEstimateMinutes ?? settings.defaultEstimateMinutes
+            remainingPlanned += max(0, estimate - minutes(totalByTicket[ticket.id] ?? 0))
+        }
+
+        return DayLoad(
+            plannedTrackedMinutes: minutes(plannedToday),
+            unplannedMinutes: minutes(ticketToday - plannedToday + adHoc),
+            remainingPlannedMinutes: remainingPlanned,
+            remainingTodayMinutes: capacityMinutes - minutes(ticketToday) - remainingPlanned
+        )
+    }
+
+    /// Lowest-ranked planned tickets that were not started, just enough to cover `overloadMinutes`.
+    public static func deferCandidates(
+        _ candidates: [PlanCandidate], plannedIDs: Set<UUID>, startedIDs: Set<UUID>, overloadMinutes: Int
+    ) -> [UUID] {
+        guard overloadMinutes > 0 else { return [] }
+        var covered = 0
+        var result: [UUID] = []
+        for candidate in candidates.reversed() where plannedIDs.contains(candidate.id) && !startedIDs.contains(candidate.id) {
+            result.append(candidate.id)
+            covered += candidate.estimateMinutes
+            if covered >= overloadMinutes { break }
+        }
+        return result
     }
 
     /// The local due date, else the GitHub "Target date" issue field.
