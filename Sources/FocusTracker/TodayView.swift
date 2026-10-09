@@ -14,6 +14,7 @@ struct TodayView: View {
 
     private var day: Date { chosenDay ?? store.now }
     private var isToday: Bool { Calendar.current.isDate(day, inSameDayAs: store.now) }
+    private var isFuture: Bool { Calendar.current.startOfDay(for: day) > Calendar.current.startOfDay(for: store.now) }
     private var todayRange: DateInterval { store.dayRange(for: day) }
 
     private var dayBinding: Binding<Date> {
@@ -28,13 +29,13 @@ struct TodayView: View {
 
     private func shiftDay(_ offset: Int) {
         guard let shifted = Calendar.current.date(byAdding: .day, value: offset, to: day) else { return }
-        dayBinding.wrappedValue = min(shifted, store.now)
+        dayBinding.wrappedValue = shifted
     }
 
     private func copySummary() {
         NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(store.daySummaryText(for: day), forType: .string)
-        NSPasteboard.general.setString(store.daySummaryHTML(for: day), forType: .html)
+        NSPasteboard.general.setString(store.daySummaryText(for: day, includeDate: true, includeTomorrow: isToday), forType: .string)
+        NSPasteboard.general.setString(store.daySummaryHTML(for: day, includeDate: true, includeTomorrow: isToday), forType: .html)
         copied = true
         Task {
             try? await Task.sleep(for: .seconds(2))
@@ -45,6 +46,7 @@ struct TodayView: View {
     private var dayLabel: String {
         if isToday { return "Today" }
         if Calendar.current.isDateInYesterday(day) { return "Yesterday" }
+        if Calendar.current.isDateInTomorrow(day) { return "Tomorrow" }
         return day.formatted(.dateTime.weekday(.abbreviated).day().month(.abbreviated))
     }
 
@@ -69,7 +71,7 @@ struct TodayView: View {
                 }
                 .help("Pick a day")
                 .popover(isPresented: $showDatePicker, arrowEdge: .bottom) {
-                    DatePicker("Day", selection: dayBinding, in: ...store.now, displayedComponents: .date)
+                    DatePicker("Day", selection: dayBinding, displayedComponents: .date)
                         .datePickerStyle(.graphical)
                         .labelsHidden()
                         .padding(12)
@@ -82,7 +84,6 @@ struct TodayView: View {
                 }
                 .help("Next day (⌘])")
                 .keyboardShortcut("]", modifiers: .command)
-                .disabled(isToday)
             }
             .buttonStyle(.plain)
             .background(Theme.cardBackground, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
@@ -132,15 +133,18 @@ struct TodayView: View {
                     .controlSize(.large)
                     .buttonStyle(.secondary)
                     .help("Copy the summary for the selected day")
+                    .disabled(isFuture)
                 }
 
-                HStack(spacing: 14) {
-                    StatCard(title: isToday ? "Tracked today" : "Tracked", value: Format.short(store.trackedTime(in: range)), symbol: "timer", tint: Theme.accent)
-                    StatCard(title: "Active tickets", value: "\(active.count)", symbol: "bolt.fill", tint: Theme.warning)
-                    StatCard(title: "Calls & meetings", value: Format.short(store.activityTime(in: range)), symbol: "phone.fill", tint: Theme.accentEnd)
+                if !isFuture {
+                    HStack(spacing: 14) {
+                        StatCard(title: isToday ? "Tracked today" : "Tracked", value: Format.short(store.trackedTime(in: range)), symbol: "timer", tint: Theme.accent)
+                        StatCard(title: "Active tickets", value: "\(active.count)", symbol: "bolt.fill", tint: Theme.warning)
+                        StatCard(title: "Calls & meetings", value: Format.short(store.activityTime(in: range)), symbol: "phone.fill", tint: Theme.accentEnd)
+                    }
                 }
 
-                if isToday { DayPlanCard(selectedTicketID: $selectedTicketID) }
+                if isToday || isFuture { DayPlanCard(selectedTicketID: $selectedTicketID, day: day) }
 
                 if isToday {
                     VStack(alignment: .leading, spacing: 10) {
@@ -157,18 +161,20 @@ struct TodayView: View {
                     }
                 }
 
-                VStack(alignment: .leading, spacing: 10) {
-                    SectionTitle(title: "Time log", count: log.count)
-                    if log.isEmpty {
-                        EmptyHint(text: isToday ? "No time tracked yet." : "No time tracked on this day.", symbol: "clock")
-                    } else {
-                        VStack(spacing: 0) {
-                            ForEach(Array(log.enumerated()), id: \.element.id) { index, item in
-                                if index > 0 { Divider() }
-                                logRow(item, range: range)
+                if !isFuture {
+                    VStack(alignment: .leading, spacing: 10) {
+                        SectionTitle(title: "Time log", count: log.count)
+                        if log.isEmpty {
+                            EmptyHint(text: isToday ? "No time tracked yet." : "No time tracked on this day.", symbol: "clock")
+                        } else {
+                            VStack(spacing: 0) {
+                                ForEach(Array(log.enumerated()), id: \.element.id) { index, item in
+                                    if index > 0 { Divider() }
+                                    logRow(item, range: range)
+                                }
                             }
+                            .cardStyle(padding: 0)
                         }
-                        .cardStyle(padding: 0)
                     }
                 }
             }

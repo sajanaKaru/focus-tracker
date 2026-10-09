@@ -79,6 +79,13 @@ final class DayPlannerTests: XCTestCase {
         XCTAssertEqual(ranked.map(\.reason), [.dueNow, .dueNow, .dueSoon, .sprintEnding, .carriedOver, .inProgress, .priority, .open])
     }
 
+    func testCurrentSprintTicketsRankAboveOtherOpenWork() {
+        let sprint = CustomField(name: "Sprint", value: "S1", kind: .iteration, project: "P", start: at(-100), end: at(24 * 10))
+        let ranked = rank([ticket("high", priority: .high), ticket("plain"), ticket("sprint", fields: [sprint])])
+        XCTAssertEqual(ranked.map(\.ticket.title), ["sprint", "high", "plain"])
+        XCTAssertEqual(ranked.first?.reason, .inSprint)
+    }
+
     func testWithinSameSignalHigherPriorityThenOldestWins() {
         let ranked = rank([
             ticket("new low", priority: .low, updated: 5),

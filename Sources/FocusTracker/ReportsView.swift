@@ -43,6 +43,8 @@ struct ReportsView: View {
                     StatCard(title: "Tickets worked", value: "\(perTicket.count)", symbol: "checkmark.circle.fill", tint: Theme.success)
                 }
 
+                CategoryReportCard()
+
                 VStack(alignment: .leading, spacing: 12) {
                     SectionTitle(title: "Hours per day")
                     Chart(totals, id: \.day) { item in

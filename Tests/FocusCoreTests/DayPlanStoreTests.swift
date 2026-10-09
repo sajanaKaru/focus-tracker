@@ -3,9 +3,10 @@ import XCTest
 
 @MainActor
 final class DayPlanStoreTests: XCTestCase {
-    private func makeStore() -> (AppStore, URL, UserDefaults) {
+    private func makeStore(everyDay: Bool = true) -> (AppStore, URL, UserDefaults) {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("ft-\(UUID().uuidString).json")
         let defaults = UserDefaults(suiteName: "ft-\(UUID().uuidString)")!
+        if everyDay { defaults.set(7, forKey: PrefKey.workDays) }
         return (AppStore(storeURL: url, defaults: defaults, tokenProvider: { nil }), url, defaults)
     }
 
@@ -17,13 +18,43 @@ final class DayPlanStoreTests: XCTestCase {
     }
 
     func testSettingsDefaultsAndOverrides() {
-        let (store, _, defaults) = makeStore()
-        XCTAssertEqual(store.planSettings, PlanSettings(workingMinutes: 480, focusFactor: 0.75, defaultEstimateMinutes: 60))
+        let (store, _, defaults) = makeStore(everyDay: false)
+        XCTAssertEqual(store.planSettings, PlanSettings(workingMinutes: 480, focusFactor: 0.75, defaultEstimateMinutes: 60, workDays: 5))
 
         defaults.set(360, forKey: PrefKey.workingMinutes)
         defaults.set(50, forKey: PrefKey.focusPercent)
         defaults.set(30, forKey: PrefKey.defaultEstimateMinutes)
-        XCTAssertEqual(store.planSettings, PlanSettings(workingMinutes: 360, focusFactor: 0.5, defaultEstimateMinutes: 30))
+        defaults.set(6, forKey: PrefKey.workDays)
+        XCTAssertEqual(store.planSettings, PlanSettings(workingMinutes: 360, focusFactor: 0.5, defaultEstimateMinutes: 30, workDays: 6))
+    }
+
+    func testWorkingDaysAndNextWorkingDay() {
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = TimeZone(secondsFromGMT: 0)!
+        let friday = cal.date(from: DateComponents(year: 2026, month: 10, day: 9))!
+        let saturday = cal.date(byAdding: .day, value: 1, to: friday)!
+        let sunday = cal.date(byAdding: .day, value: 2, to: friday)!
+        let monday = cal.date(byAdding: .day, value: 3, to: friday)!
+
+        let weekdays = PlanSettings(workDays: 5)
+        XCTAssertFalse(weekdays.isWorkingDay(saturday, calendar: cal))
+        XCTAssertEqual(weekdays.nextWorkingDay(after: friday, calendar: cal), monday)
+        XCTAssertEqual(PlanSettings(workDays: 6).nextWorkingDay(after: friday, calendar: cal), saturday)
+        XCTAssertFalse(PlanSettings(workDays: 6).isWorkingDay(sunday, calendar: cal))
+        XCTAssertEqual(PlanSettings(workDays: 6).nextWorkingDay(after: saturday, calendar: cal), monday)
+        XCTAssertEqual(PlanSettings(workDays: 7).nextWorkingDay(after: saturday, calendar: cal), sunday)
+    }
+
+    func testDaysOffHaveNoCapacityAndNoPlan() {
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = TimeZone(secondsFromGMT: 0)!
+        let saturday = cal.date(from: DateComponents(year: 2026, month: 10, day: 10))!
+        let (store, _, defaults) = makeStore()
+        defaults.set(5, forKey: PrefKey.workDays)
+        addTicket(store, "a", .urgent, minutes: 60)
+
+        XCTAssertEqual(store.capacity(for: saturday, calendarBusy: [], calendar: cal).capacityMinutes, 0)
+        XCTAssertEqual(store.ensurePlan(for: saturday, calendarBusy: [], calendar: cal)?.ticketIDs, [])
     }
 
     func testCapacitySubtractsLoggedActivities() {

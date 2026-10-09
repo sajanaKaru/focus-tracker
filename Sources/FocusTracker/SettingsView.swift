@@ -10,6 +10,7 @@ struct SettingsView: View {
     @AppStorage(PrefKey.workingMinutes) private var workingMinutes = 480
     @AppStorage(PrefKey.focusPercent) private var focusPercent = 75
     @AppStorage(PrefKey.defaultEstimateMinutes) private var defaultEstimateMinutes = 60
+    @AppStorage(PrefKey.workDays) private var workDays = 5
 
     @State private var token = ""
     @State private var hasToken = Keychain.get(account: Keychain.githubAccount) != nil
@@ -45,10 +46,15 @@ struct SettingsView: View {
             }
 
             Section("Daily plan") {
+                Picker("Working days", selection: $workDays) {
+                    Text("Weekdays (Mon–Fri)").tag(5)
+                    Text("6 days (Mon–Sat)").tag(6)
+                    Text("7 days").tag(7)
+                }
                 Stepper("Daily working time: \(Format.short(TimeInterval(workingMinutes * 60)))", value: $workingMinutes, in: 60...960, step: 30)
                 Stepper("Focus factor: \(focusPercent)%", value: $focusPercent, in: 30...100, step: 5)
                 Stepper("Default estimate: \(Format.short(TimeInterval(defaultEstimateMinutes * 60)))", value: $defaultEstimateMinutes, in: 15...480, step: 15)
-                Text("Capacity = (working time − meetings) × focus factor. Tickets without an estimate count as the default estimate.")
+                Text("Capacity = (working time − meetings) × focus factor. Tickets without an estimate count as the default estimate. Days off have no capacity and are skipped when planning tomorrow.")
                     .font(.caption).foregroundStyle(.secondary)
             }
         }

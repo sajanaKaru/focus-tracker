@@ -4,18 +4,19 @@ import SwiftUI
 struct DayPlanCard: View {
     @Environment(AppStore.self) private var store
     @Binding var selectedTicketID: UUID?
+    let day: Date
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var calendarBusy: [DateInterval] = []
     @State private var calendarNote: String?
     @State private var page = 0
+    @State private var search = ""
     private let pageSize = 10
 
     // Declared so the card re-renders when a plan setting changes in Settings.
     @AppStorage(PrefKey.workingMinutes) private var workingMinutes = 480
     @AppStorage(PrefKey.focusPercent) private var focusPercent = 75
     @AppStorage(PrefKey.defaultEstimateMinutes) private var defaultEstimateMinutes = 60
-
-    private var day: Date { store.now }
+    @AppStorage(PrefKey.workDays) private var workDays = 5
 
     private func text(_ minutes: Int) -> String { Format.short(TimeInterval(minutes * 60)) }
 
@@ -49,26 +50,58 @@ struct DayPlanCard: View {
                     Label("Over capacity by \(text(planned - capacity.capacityMinutes))", systemImage: "exclamationmark.triangle.fill")
                         .font(.caption).foregroundStyle(Theme.warning)
                 }
+                if !store.planSettings.isWorkingDay(day) {
+                    Text("Not a working day. Change this in Settings → Working days.").font(.caption).foregroundStyle(.secondary)
+                }
                 if let calendarNote { Text(calendarNote).font(.caption).foregroundStyle(.secondary) }
             }
 
             if candidates.isEmpty {
                 EmptyHint(text: "No open tickets to plan. Sync GitHub or add a ticket.", symbol: "checklist")
             } else {
-                let pageCount = (candidates.count + pageSize - 1) / pageSize
-                let current = min(page, pageCount - 1)
-                let visible = candidates.dropFirst(current * pageSize).prefix(pageSize)
-                VStack(spacing: 0) {
-                    ForEach(Array(visible.enumerated()), id: \.element.id) { index, candidate in
-                        if index > 0 { Divider() }
-                        row(candidate, planned: plannedIDs.contains(candidate.id))
-                    }
+                searchField
+                let query = search.trimmingCharacters(in: .whitespacesAndNewlines)
+                let matches = query.isEmpty ? candidates : candidates.filter {
+                    $0.ticket.title.localizedCaseInsensitiveContains(query)
+                        || $0.ticket.displayKey.localizedCaseInsensitiveContains(query)
                 }
-                .cardStyle(padding: 0)
+                let pageCount = max(1, (matches.count + pageSize - 1) / pageSize)
+                let current = min(page, pageCount - 1)
+                let visible = matches.dropFirst(current * pageSize).prefix(pageSize)
+                if matches.isEmpty {
+                    EmptyHint(text: "No tickets match \"\(query)\".", symbol: "magnifyingglass")
+                } else {
+                    VStack(spacing: 0) {
+                        ForEach(Array(visible.enumerated()), id: \.element.id) { index, candidate in
+                            if index > 0 { Divider() }
+                            row(candidate, planned: plannedIDs.contains(candidate.id))
+                        }
+                    }
+                    .cardStyle(padding: 0)
+                }
                 if pageCount > 1 { pager(current: current, pageCount: pageCount) }
             }
         }
-        .task(id: candidates.isEmpty) { await loadCalendarAndPlan() }
+        .task(id: "\(candidates.isEmpty)|\(Calendar.current.startOfDay(for: day))") { await loadCalendarAndPlan() }
+    }
+
+    private var searchField: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+            TextField("Search plan", text: $search)
+                .textFieldStyle(.plain)
+                .onChange(of: search) { page = 0 }
+            if !search.isEmpty {
+                Button { search = "" } label: { Image(systemName: "xmark.circle.fill") }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.secondary)
+                    .help("Clear search")
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 7)
+        .background(Theme.cardBackground, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(Color.primary.opacity(0.12)))
     }
 
     private func pager(current: Int, pageCount: Int) -> some View {
@@ -147,6 +180,7 @@ private extension PlanReason {
         case .sprintEnding: Theme.teal
         case .carriedOver: Theme.accentEnd
         case .inProgress: Theme.info
+        case .inSprint: Theme.accent
         case .priority: Theme.warning
         case .open: Theme.slate
         }

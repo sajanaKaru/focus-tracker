@@ -4,11 +4,32 @@ public struct PlanSettings: Equatable, Sendable {
     public var workingMinutes: Int
     public var focusFactor: Double
     public var defaultEstimateMinutes: Int
+    /// 5 = Monday to Friday, 6 = Monday to Saturday, 7 = every day.
+    public var workDays: Int
 
-    public init(workingMinutes: Int = 480, focusFactor: Double = 0.75, defaultEstimateMinutes: Int = 60) {
+    public init(workingMinutes: Int = 480, focusFactor: Double = 0.75, defaultEstimateMinutes: Int = 60, workDays: Int = 7) {
         self.workingMinutes = workingMinutes
         self.focusFactor = focusFactor
         self.defaultEstimateMinutes = defaultEstimateMinutes
+        self.workDays = workDays
+    }
+
+    public func isWorkingDay(_ date: Date, calendar: Calendar = .current) -> Bool {
+        let weekday = calendar.component(.weekday, from: date) // 1 = Sunday
+        switch workDays {
+        case 7...: return true
+        case 6: return weekday != 1
+        default: return (2...6).contains(weekday)
+        }
+    }
+
+    /// The first working day after `date`, at the start of that day.
+    public func nextWorkingDay(after date: Date, calendar: Calendar = .current) -> Date {
+        let start = calendar.startOfDay(for: date)
+        for offset in 1...7 {
+            if let next = calendar.date(byAdding: .day, value: offset, to: start), isWorkingDay(next, calendar: calendar) { return next }
+        }
+        return start
     }
 }
 
@@ -21,7 +42,7 @@ public struct Capacity: Equatable, Sendable {
 
 /// Why a ticket is suggested; the raw value is its rank (lower is stronger).
 public enum PlanReason: Int, Sendable {
-    case dueNow, dueSoon, sprintEnding, carriedOver, inProgress, priority, open
+    case dueNow, dueSoon, sprintEnding, carriedOver, inProgress, inSprint, priority, open
 
     public var title: String {
         switch self {
@@ -30,6 +51,7 @@ public enum PlanReason: Int, Sendable {
         case .sprintEnding: "Sprint ends soon"
         case .carriedOver: "Carried over"
         case .inProgress: "In progress"
+        case .inSprint: "In sprint"
         case .priority: "Priority"
         case .open: "Open"
         }
@@ -47,7 +69,8 @@ public struct PlanCandidate: Identifiable, Equatable, Sendable {
 }
 
 public enum DayPlanner {
-    public static func capacity(day: DateInterval, busy: [DateInterval], settings: PlanSettings) -> Capacity {
+    public static func capacity(day: DateInterval, busy: [DateInterval], settings: PlanSettings, calendar: Calendar = .current) -> Capacity {
+        guard settings.isWorkingDay(day.start, calendar: calendar) else { return Capacity(freeMinutes: 0, capacityMinutes: 0) }
         let free = max(0, settings.workingMinutes - busyMinutes(busy, within: day))
         return Capacity(freeMinutes: free, capacityMinutes: Int((Double(free) * settings.focusFactor).rounded()))
     }
@@ -89,6 +112,7 @@ public enum DayPlanner {
             }
             if carriedOver.contains(ticket.id) { return .carriedOver }
             if ticket.status == .inProgress || ticket.status == .inReview { return .inProgress }
+            if ticket.sprints.contains(where: { $0.isCurrent(at: now) }) { return .inSprint }
             return ticket.priority == .none ? .open : .priority
         }
 

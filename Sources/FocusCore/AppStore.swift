@@ -10,6 +10,7 @@ public enum PrefKey {
     public static let workingMinutes = "planWorkingMinutes"
     public static let focusPercent = "planFocusPercent"
     public static let defaultEstimateMinutes = "planDefaultEstimateMinutes"
+    public static let workDays = "planWorkDays"
 }
 
 public enum SyncState: Equatable, Sendable {
@@ -164,6 +165,22 @@ public final class AppStore {
         }
     }
 
+    /// Tickets with at least a minute tracked (or a note) in `interval`, bucketed by category.
+    public func categoryStats(in interval: DateInterval) -> [CategoryStat] {
+        let worked = tickets.compactMap { ticket -> CategoryStat.Entry? in
+            let seconds = trackedTime(for: ticket.id, in: interval)
+            let hasNote = notes.contains { $0.ticketID == ticket.id && interval.contains($0.createdAt) }
+            return seconds >= 60 || hasNote ? CategoryStat.Entry(ticket: ticket, seconds: seconds) : nil
+        }.sorted { $0.seconds > $1.seconds }
+
+        var stats = TicketCategory.allCases.map { category in
+            CategoryStat(category: category, entries: worked.filter { category.matches($0.ticket) })
+        }
+        let other = worked.filter { entry in !TicketCategory.allCases.contains { $0.matches(entry.ticket) } }
+        if !other.isEmpty { stats.append(CategoryStat(category: nil, entries: other)) }
+        return stats
+    }
+
     public var menuBarTitle: String {
         if let active = activeEntry { return Format.clock(active.duration(at: now)) }
         if let active = activeActivity { return Format.clock(active.duration(at: now)) }
@@ -230,18 +247,38 @@ public final class AppStore {
     }
 
     /// Plain-text summary with "- " bullets under each category heading.
-    public func daySummaryText(for day: Date, calendar: Calendar = .current) -> String {
+    public func daySummaryText(for day: Date, calendar: Calendar = .current, includeDate: Bool = false, includeTomorrow: Bool = false) -> String {
         let sections = daySummarySections(for: day, calendar: calendar)
-        guard !sections.isEmpty else { return "(nothing tracked)" }
-        return sections.map { section in
+        let heading = includeDate ? dateHeading(day) + "\n--------\n" : ""
+        var text = heading + (sections.isEmpty ? "(nothing tracked)" : sections.map { section in
             ([section.title] + section.items.flatMap { item in
                 ["- \(item.text)"] + item.notes.map { "  - \($0)" }
             }).joined(separator: "\n")
-        }.joined(separator: "\n")
+        }.joined(separator: "\n"))
+        if includeTomorrow {
+            let next = tomorrowPlan(after: day, calendar: calendar)
+            let lines = next.items.isEmpty ? ["- (nothing planned)"] : next.items.map { "- \($0.text)" }
+            text += "\n\n" + ([next.label, "--------"] + lines).joined(separator: "\n")
+        }
+        return text
+    }
+
+    /// Planned tickets for the next working day after `day`; falls back to the suggested picks when no plan exists yet.
+    private func tomorrowPlan(after day: Date, calendar: Calendar) -> (label: String, items: [SummaryItem]) {
+        let next = planSettings.nextWorkingDay(after: day, calendar: calendar)
+        let ids = plan(for: next, calendar: calendar)?.ticketIDs ?? DayPlanner.autoPick(
+            planCandidates(for: next, calendar: calendar),
+            capacityMinutes: capacity(for: next, calendarBusy: [], calendar: calendar).capacityMinutes
+        )
+        let items = ids.compactMap { ticket($0) }
+            .filter { $0.status != .done }
+            .map { SummaryItem(text: $0.github?.url ?? $0.title, isLink: $0.github != nil) }
+        let isNextDay = calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: day)).map { calendar.isDate($0, inSameDayAs: next) } ?? false
+        return (isNextDay ? "Tomorrow" : next.formatted(.dateTime.weekday(.wide)), items)
     }
 
     /// The same summary as HTML so pasting into Slack or Mail gives real bullet lists and links.
-    public func daySummaryHTML(for day: Date, calendar: Calendar = .current) -> String {
+    public func daySummaryHTML(for day: Date, calendar: Calendar = .current, includeDate: Bool = false, includeTomorrow: Bool = false) -> String {
         func esc(_ s: String) -> String {
             s.replacingOccurrences(of: "&", with: "&amp;")
                 .replacingOccurrences(of: "<", with: "&lt;")
@@ -249,15 +286,23 @@ public final class AppStore {
                 .replacingOccurrences(of: "\"", with: "&quot;")
         }
         let sections = daySummarySections(for: day, calendar: calendar)
-        guard !sections.isEmpty else { return "<p>(nothing tracked)</p>" }
-        return sections.map { section in
-            let items = section.items.map { item -> String in
+        let heading = includeDate ? "<div>\(esc(dateHeading(day)))</div><div>--------</div>" : ""
+        func list(_ items: [SummaryItem]) -> String {
+            "<ul>" + items.map { item -> String in
                 let label = item.isLink ? "<a href=\"\(esc(item.text))\">\(esc(item.text))</a>" : esc(item.text)
                 let notes = item.notes.isEmpty ? "" : "<ul>" + item.notes.map { "<li>\(esc($0))</li>" }.joined() + "</ul>"
                 return "<li>\(label)\(notes)</li>"
-            }.joined()
-            return "<div>\(esc(section.title))</div><ul>\(items)</ul>"
-        }.joined()
+            }.joined() + "</ul>"
+        }
+        var html = heading + (sections.isEmpty
+            ? "<p>(nothing tracked)</p>"
+            : sections.map { "<div>\(esc($0.title))</div>" + list($0.items) }.joined())
+        if includeTomorrow {
+            let next = tomorrowPlan(after: day, calendar: calendar)
+            html += "<br><div>\(esc(next.label))</div><div>--------</div>"
+                + (next.items.isEmpty ? "<p>(nothing planned)</p>" : list(next.items))
+        }
+        return html
     }
 
     public func standupText(calendar: Calendar = .current) -> String {
@@ -702,7 +747,8 @@ public final class AppStore {
         let working = defaults.object(forKey: PrefKey.workingMinutes) as? Int ?? 480
         let focus = defaults.object(forKey: PrefKey.focusPercent) as? Int ?? 75
         let estimate = defaults.object(forKey: PrefKey.defaultEstimateMinutes) as? Int ?? 60
-        return PlanSettings(workingMinutes: working, focusFactor: Double(focus) / 100, defaultEstimateMinutes: estimate)
+        let workDays = defaults.object(forKey: PrefKey.workDays) as? Int ?? 5
+        return PlanSettings(workingMinutes: working, focusFactor: Double(focus) / 100, defaultEstimateMinutes: estimate, workDays: workDays)
     }
 
     public func plan(for day: Date, calendar: Calendar = .current) -> DayPlan? {
@@ -714,7 +760,8 @@ public final class AppStore {
         let start = calendar.startOfDay(for: day)
         let earlier = dayPlans.filter { $0.day < start }.max { $0.day < $1.day }
         let carried = Set((earlier?.ticketIDs ?? []).filter { ticket($0).map { $0.status != .done } ?? false })
-        return DayPlanner.rank(tickets: tickets, carriedOver: carried, now: now, settings: planSettings, calendar: calendar)
+        // A future day is ranked as of its own start so "due now" means due by then.
+        return DayPlanner.rank(tickets: tickets, carriedOver: carried, now: max(now, start), settings: planSettings, calendar: calendar)
     }
 
     public func capacity(for day: Date, calendarBusy: [DateInterval], calendar: Calendar = .current) -> Capacity {
@@ -722,7 +769,7 @@ public final class AppStore {
             let end = activity.end ?? now
             return end > activity.start ? DateInterval(start: activity.start, end: end) : nil
         }
-        return DayPlanner.capacity(day: dayRange(for: day, calendar: calendar), busy: calendarBusy + logged, settings: planSettings)
+        return DayPlanner.capacity(day: dayRange(for: day, calendar: calendar), busy: calendarBusy + logged, settings: planSettings, calendar: calendar)
     }
 
     /// Returns the day's plan, creating it from the suggestions the first time there are any.
@@ -739,7 +786,8 @@ public final class AppStore {
         let capacity = capacity(for: day, calendarBusy: calendarBusy, calendar: calendar)
         let plan = DayPlan(
             day: calendar.startOfDay(for: day),
-            ticketIDs: DayPlanner.autoPick(candidates, capacityMinutes: capacity.capacityMinutes)
+            ticketIDs: planSettings.isWorkingDay(day, calendar: calendar)
+                ? DayPlanner.autoPick(candidates, capacityMinutes: capacity.capacityMinutes) : []
         )
         dayPlans.removeAll { calendar.isDate($0.day, inSameDayAs: day) }
         dayPlans.append(plan)
