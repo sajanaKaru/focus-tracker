@@ -285,6 +285,33 @@ public struct GitHubClient: Sendable {
         _ = try await send(post: url, body: JSONEncoder().encode(["body": body]))
     }
 
+    /// Open pull requests authored by `login` (first 100, most recently updated first) with review, CI and conflict state.
+    public func fetchOpenPullRequests(authoredBy login: String) async throws -> (items: [PullRequestItem], total: Int) {
+        let search = "is:pr is:open author:\(login) archived:false sort:updated-desc"
+        let data = try await graphQL(Self.pullRequestsQuery, variables: ["q": search])
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let envelope = try decoder.decode(PullRequestsEnvelope.self, from: data)
+        if envelope.data == nil, let message = envelope.errors?.first?.message { throw GitHubError.graphQL(message) }
+        guard let result = envelope.data?.search else { throw GitHubError.invalidResponse }
+        return (result.nodes.compactMap { $0?.toItem() }, result.issueCount)
+    }
+
+    private static let pullRequestsQuery = """
+    query($q: String!) {
+      search(query: $q, type: ISSUE, first: 100) {
+        issueCount
+        nodes {
+          ... on PullRequest {
+            number title url isDraft createdAt updatedAt reviewDecision mergeable
+            repository { nameWithOwner }
+            commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }
+          }
+        }
+      }
+    }
+    """
+
     private func graphQL(_ query: String, variables: [String: Any]) async throws -> Data {
         let body = try JSONSerialization.data(withJSONObject: ["query": query, "variables": variables])
         return try await send(post: URL(string: "https://\(Self.apiHost)/graphql")!, body: body)
@@ -531,4 +558,54 @@ private struct ContentNode: Decodable {
         }
         return fields
     }
+}
+
+private struct PullRequestsEnvelope: Decodable {
+    struct Failure: Decodable { let message: String }
+    struct Search: Decodable {
+        let issueCount: Int
+        let nodes: [Node?]
+    }
+    struct Node: Decodable {
+        struct Repository: Decodable { let nameWithOwner: String }
+        struct Commits: Decodable {
+            struct CommitNode: Decodable {
+                struct Commit: Decodable {
+                    struct Rollup: Decodable { let state: String }
+                    let statusCheckRollup: Rollup?
+                }
+                let commit: Commit
+            }
+            let nodes: [CommitNode?]?
+        }
+
+        let number: Int?
+        let title: String?
+        let url: String?
+        let isDraft: Bool?
+        let createdAt: Date?
+        let updatedAt: Date?
+        let reviewDecision: String?
+        let mergeable: String?
+        let repository: Repository?
+        let commits: Commits?
+
+        func toItem() -> PullRequestItem? {
+            guard let number, let title, let url, let repo = repository?.nameWithOwner,
+                  let createdAt, let updatedAt else { return nil }
+            let lastCommit = commits?.nodes?.compactMap { $0 }.first
+            return PullRequestItem(
+                repo: repo, number: number, title: title, url: url,
+                isDraft: isDraft ?? false,
+                review: ReviewState(decision: reviewDecision),
+                ci: CIState(rollup: lastCommit?.commit.statusCheckRollup?.state),
+                hasConflicts: mergeable == "CONFLICTING",
+                createdAt: createdAt, updatedAt: updatedAt
+            )
+        }
+    }
+    struct Data: Decodable { let search: Search? }
+
+    let data: Data?
+    let errors: [Failure]?
 }
