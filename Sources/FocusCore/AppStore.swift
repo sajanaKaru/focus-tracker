@@ -759,7 +759,8 @@ public final class AppStore {
     public func planCandidates(for day: Date, calendar: Calendar = .current) -> [PlanCandidate] {
         let start = calendar.startOfDay(for: day)
         let earlier = dayPlans.filter { $0.day < start }.max { $0.day < $1.day }
-        let carried = Set((earlier?.ticketIDs ?? []).filter { ticket($0).map { $0.status != .done } ?? false })
+        let earlierIDs = (earlier?.ticketIDs ?? []) + (earlier?.deferredTicketIDs ?? [])
+        let carried = Set(earlierIDs.filter { ticket($0).map { $0.status != .done } ?? false })
         // A future day is ranked as of its own start so "due now" means due by then.
         return DayPlanner.rank(tickets: tickets, carriedOver: carried, now: max(now, start), settings: planSettings, calendar: calendar)
     }
@@ -787,7 +788,8 @@ public final class AppStore {
         let plan = DayPlan(
             day: calendar.startOfDay(for: day),
             ticketIDs: planSettings.isWorkingDay(day, calendar: calendar)
-                ? DayPlanner.autoPick(candidates, capacityMinutes: capacity.capacityMinutes) : []
+                ? DayPlanner.autoPick(candidates, capacityMinutes: capacity.capacityMinutes) : [],
+            createdAt: Date()
         )
         dayPlans.removeAll { calendar.isDate($0.day, inSameDayAs: day) }
         dayPlans.append(plan)
@@ -805,6 +807,66 @@ public final class AppStore {
         } else {
             dayPlans.append(DayPlan(day: calendar.startOfDay(for: day), ticketIDs: [ticketID]))
         }
+        save()
+    }
+
+    // MARK: - Live day
+
+    /// Creates a local ticket for unplanned work and starts its timer; it is not added to the plan.
+    @discardableResult
+    public func addQuickCapture(kind: QuickCaptureKind, title: String) -> Ticket? {
+        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        let ticket = Ticket(title: trimmed, labels: [kind.title], isQuickCapture: true)
+        tickets.append(ticket)
+        start(ticket.id)
+        return self.ticket(ticket.id)
+    }
+
+    public func dayLoad(for day: Date, calendarBusy: [DateInterval], calendar: Calendar = .current) -> DayLoad {
+        DayPlanner.load(
+            plannedIDs: Set(plan(for: day, calendar: calendar)?.ticketIDs ?? []),
+            tickets: tickets, entries: entries, activities: activities,
+            capacityMinutes: capacity(for: day, calendarBusy: calendarBusy, calendar: calendar).capacityMinutes,
+            day: dayRange(for: day, calendar: calendar), now: now, settings: planSettings
+        )
+    }
+
+    /// Planned tickets that could be moved to tomorrow to cover today's overload.
+    public func deferCandidates(for day: Date, calendarBusy: [DateInterval], calendar: Calendar = .current) -> [UUID] {
+        let started = Set(entries.map(\.ticketID)).union(tickets.filter { $0.status == .inProgress }.map(\.id))
+        return DayPlanner.deferCandidates(
+            planCandidates(for: day, calendar: calendar),
+            plannedIDs: Set(plan(for: day, calendar: calendar)?.ticketIDs ?? []),
+            startedIDs: started,
+            overloadMinutes: dayLoad(for: day, calendarBusy: calendarBusy, calendar: calendar).overloadMinutes
+        )
+    }
+
+    /// Removes the ticket from the day's plan and records it so it ranks as carried over on the next day.
+    public func deferToTomorrow(_ ticketID: UUID, from day: Date, calendar: Calendar = .current) {
+        guard let i = dayPlans.firstIndex(where: { calendar.isDate($0.day, inSameDayAs: day) }) else { return }
+        dayPlans[i].ticketIDs.removeAll { $0 == ticketID }
+        var deferred = dayPlans[i].deferredTicketIDs ?? []
+        if !deferred.contains(ticketID) { deferred.append(ticketID) }
+        dayPlans[i].deferredTicketIDs = deferred
+        save()
+    }
+
+    /// GitHub tickets first synced after the day's plan was created and not yet planned, deferred or ignored.
+    public func newSincePlanning(for day: Date, calendar: Calendar = .current) -> [PlanCandidate] {
+        guard let plan = plan(for: day, calendar: calendar), let created = plan.createdAt else { return [] }
+        let hidden = Set(plan.ticketIDs).union(plan.deferredTicketIDs ?? []).union(plan.ignoredNewTicketIDs ?? [])
+        return planCandidates(for: day, calendar: calendar).filter {
+            $0.ticket.github != nil && $0.ticket.createdAt > created && !hidden.contains($0.id)
+        }
+    }
+
+    public func ignoreNew(_ ticketID: UUID, on day: Date, calendar: Calendar = .current) {
+        guard let i = dayPlans.firstIndex(where: { calendar.isDate($0.day, inSameDayAs: day) }) else { return }
+        var ignored = dayPlans[i].ignoredNewTicketIDs ?? []
+        if !ignored.contains(ticketID) { ignored.append(ticketID) }
+        dayPlans[i].ignoredNewTicketIDs = ignored
         save()
     }
 
