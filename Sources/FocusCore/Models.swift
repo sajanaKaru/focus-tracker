@@ -323,6 +323,28 @@ public struct Activity: Identifiable, Codable, Hashable, Sendable {
     }
 }
 
+public struct SummaryItem: Hashable, Sendable {
+    public var text: String
+    public var isLink: Bool
+    public var notes: [String]
+
+    public init(text: String, isLink: Bool = false, notes: [String] = []) {
+        self.text = text
+        self.isLink = isLink
+        self.notes = notes
+    }
+}
+
+public struct SummarySection: Hashable, Sendable {
+    public var title: String
+    public var items: [SummaryItem]
+
+    public init(title: String, items: [SummaryItem]) {
+        self.title = title
+        self.items = items
+    }
+}
+
 /// One row of a time log: tracked time, a note, or a non-ticket activity, ordered by `date`.
 public enum LogItem: Identifiable, Hashable, Sendable {
     case time(TimeEntry)

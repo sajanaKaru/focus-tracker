@@ -33,6 +33,7 @@ struct TodayView: View {
     private func copySummary() {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(store.daySummaryText(for: day), forType: .string)
+        NSPasteboard.general.setString(store.daySummaryHTML(for: day), forType: .html)
         copied = true
         Task {
             try? await Task.sleep(for: .seconds(2))

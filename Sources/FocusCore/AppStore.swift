@@ -201,13 +201,14 @@ public final class AppStore {
     }
 
     /// Worked tickets grouped by their GitHub project Status (else the app status), then activities grouped by kind.
-    private func categorizedSections(in range: DateInterval) -> [(title: String, lines: [String])] {
-        var sections: [(title: String, lines: [String])] = []
-        func append(_ title: String, _ line: String) {
+    public func daySummarySections(for day: Date, calendar: Calendar = .current) -> [SummarySection] {
+        let range = dayRange(for: day, calendar: calendar)
+        var sections: [SummarySection] = []
+        func append(_ title: String, _ item: SummaryItem) {
             if let i = sections.firstIndex(where: { $0.title == title }) {
-                sections[i].lines.append(line)
+                sections[i].items.append(item)
             } else {
-                sections.append((title, [line]))
+                sections.append(SummarySection(title: title, items: [item]))
             }
         }
 
@@ -216,25 +217,47 @@ public final class AppStore {
             let ticketNotes = notes
                 .filter { $0.ticketID == ticket.id && range.contains($0.createdAt) }
                 .sorted { $0.createdAt < $1.createdAt }
-                .map { "- \($0.text)" }
+                .map(\.text)
             guard seconds >= 60 || !ticketNotes.isEmpty else { continue }
             let category = ticket.field(named: "Status")?.value ?? ticket.status.title
-            let link = ticket.github?.url ?? ticket.title
-            append(category, ([link] + ticketNotes).joined(separator: "\n"))
+            append(category, SummaryItem(text: ticket.github?.url ?? ticket.title, isLink: ticket.github != nil, notes: ticketNotes))
         }
         for activity in activities where activity.duration(in: range, at: now) >= 60 {
-            append(activity.kind.title, activity.title)
+            let title = activity.kind == .other ? activity.kind.title : "Meetings"
+            append(title, SummaryItem(text: activity.title))
         }
         return sections
     }
 
-    /// What was worked on during the calendar day containing `day`.
+    /// Plain-text summary with "- " bullets under each category heading.
     public func daySummaryText(for day: Date, calendar: Calendar = .current) -> String {
-        let sections = categorizedSections(in: dayRange(for: day, calendar: calendar))
-        let body = sections.isEmpty
-            ? "(nothing tracked)"
-            : sections.map { "\($0.title)\n\n\($0.lines.joined(separator: "\n"))" }.joined(separator: "\n\n")
-        return "\(dateHeading(day))\n\n\(body)"
+        let sections = daySummarySections(for: day, calendar: calendar)
+        guard !sections.isEmpty else { return "(nothing tracked)" }
+        return sections.map { section in
+            ([section.title] + section.items.flatMap { item in
+                ["- \(item.text)"] + item.notes.map { "  - \($0)" }
+            }).joined(separator: "\n")
+        }.joined(separator: "\n")
+    }
+
+    /// The same summary as HTML so pasting into Slack or Mail gives real bullet lists and links.
+    public func daySummaryHTML(for day: Date, calendar: Calendar = .current) -> String {
+        func esc(_ s: String) -> String {
+            s.replacingOccurrences(of: "&", with: "&amp;")
+                .replacingOccurrences(of: "<", with: "&lt;")
+                .replacingOccurrences(of: ">", with: "&gt;")
+                .replacingOccurrences(of: "\"", with: "&quot;")
+        }
+        let sections = daySummarySections(for: day, calendar: calendar)
+        guard !sections.isEmpty else { return "<p>(nothing tracked)</p>" }
+        return sections.map { section in
+            let items = section.items.map { item -> String in
+                let label = item.isLink ? "<a href=\"\(esc(item.text))\">\(esc(item.text))</a>" : esc(item.text)
+                let notes = item.notes.isEmpty ? "" : "<ul>" + item.notes.map { "<li>\(esc($0))</li>" }.joined() + "</ul>"
+                return "<li>\(label)\(notes)</li>"
+            }.joined()
+            return "<div>\(esc(section.title))</div><ul>\(items)</ul>"
+        }.joined()
     }
 
     public func standupText(calendar: Calendar = .current) -> String {
@@ -249,6 +272,7 @@ public final class AppStore {
         let todayLines = planned + otherWork + activityLines(in: todayRange)
 
         return """
+        \(dateHeading(yesterday))
         \(daySummaryText(for: yesterday, calendar: calendar))
 
         \(dateHeading(today))
