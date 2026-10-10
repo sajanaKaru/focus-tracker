@@ -59,16 +59,10 @@ struct TicketsView: View {
     @Environment(AppStore.self) private var store
     @Binding var selectedTicketID: UUID?
     var filter = TicketFilter()
-    @State private var search = ""
     @State private var showDone = false
 
     var body: some View {
-        let visible = store.tickets(matching: filter).filter { ticket in
-            (showDone || ticket.status != .done)
-                && (search.isEmpty
-                    || ticket.title.localizedCaseInsensitiveContains(search)
-                    || ticket.displayKey.localizedCaseInsensitiveContains(search))
-        }
+        let visible = store.tickets(matching: filter).filter { showDone || $0.status != .done }
 
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 18) {
@@ -106,7 +100,6 @@ struct TicketsView: View {
                 )
             }
         }
-        .searchable(text: $search, prompt: "Search tickets")
         .toolbar {
             ToolbarItem { Toggle("Show done", isOn: $showDone) }
         }

@@ -1,3 +1,4 @@
+import AppKit
 import FocusCore
 import SwiftUI
 
@@ -84,6 +85,28 @@ struct RootView: View {
     @State private var showingNewTicket = false
     @State private var filter = TicketFilter()
     @State private var appliedDefaultSprint = false
+    @State private var searchText = ""
+    @FocusState private var searchFocused: Bool
+
+    private var isSearching: Bool { !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+
+    private func openTicket(_ ticket: Ticket) {
+        planTicketID = nil
+        selectedTicketID = ticket.id
+        searchText = ""
+        searchFocused = false
+    }
+
+    /// Return opens the best match: the first ticket, else the first pull request.
+    private func submitSearch() {
+        let hits = SearchHits.find(searchText, in: store)
+        if let ticket = hits.tickets.first {
+            openTicket(ticket)
+        } else if let item = hits.pullRequests.first, let url = URL(string: item.url), url.scheme == "https" {
+            NSWorkspace.shared.open(url)
+            searchText = ""
+        }
+    }
 
     var body: some View {
         NavigationSplitView {
@@ -100,6 +123,11 @@ struct RootView: View {
                 content
             }
             .background(Theme.pageBackground)
+            .overlay(alignment: .top) {
+                if isSearching {
+                    SearchResultsOverlay(query: searchText, openTicket: openTicket) { searchText = "" }
+                }
+            }
             .inspector(isPresented: inspectorShown) {
                 if let id = selectedTicketID {
                     TicketDetailView(ticketID: id) { planTicketID = id }
@@ -109,7 +137,16 @@ struct RootView: View {
         }
         .toolbarBackground(.hidden, for: .windowToolbar)
         .overlay(alignment: .top) { TitleBarStrip() }
+        .background {
+            Button("Search") { searchFocused = true }
+                .keyboardShortcut("f", modifiers: .command)
+                .opacity(0)
+                .frame(width: 0, height: 0)
+        }
         .toolbar {
+            ToolbarItem(placement: .principal) {
+                GlobalSearchField(query: $searchText, focused: $searchFocused, onSubmit: submitSearch)
+            }
             ToolbarItemGroup {
                 Button { showingNewTicket = true } label: { Label("New Ticket", systemImage: "plus") }
                     .keyboardShortcut("n", modifiers: .command)
