@@ -28,6 +28,31 @@ final class RemoteEditTests: XCTestCase {
         XCTAssertEqual(TicketStatus(optionName: "Devices queue"), .todo, "only the word Dev counts")
     }
 
+    func testReadyForDevelopmentAndPrioritisedAreTodo() {
+        for name in ["Prioritised", "1️⃣ Prioritised", "Prioritised 🥅", "Ready for Development", "Ready for Dev 👍", "📜 Sprint Backlog"] {
+            let expected: TicketStatus = name.contains("Backlog") ? .backlog : .todo
+            XCTAssertEqual(TicketStatus(optionName: name), expected, name)
+        }
+    }
+
+    func testReadyForLiveReleaseReadyAndReleasedAreDone() {
+        for name in ["Ready for Live", "👍 Ready for Live", "Ready for Live 👍", "Release Ready", "✅ Released", "💯 Merged to Beta"] {
+            XCTAssertEqual(TicketStatus(optionName: name), .done, name)
+        }
+    }
+
+    func testWontFixAndDuplicateAreDone() {
+        for name in ["Won't fix", "Wont fix", "Won’t Fix", "Duplicate", "🚫 Duplicate"] {
+            XCTAssertEqual(TicketStatus(optionName: name), .done, name)
+        }
+    }
+
+    func testReviewAndTestingStayInReview() {
+        for name in ["🤞 Code Review", "Code Review 🤞", "👀 Tech review", "🧪 Testing"] {
+            XCTAssertEqual(TicketStatus(optionName: name), .inReview, name)
+        }
+    }
+
     func testSyncPutsInDevTicketsInProgress() {
         let issue = RemoteIssue(
             repo: "me/a", number: 1, title: "A", url: "u",

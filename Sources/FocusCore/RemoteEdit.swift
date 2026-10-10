@@ -45,10 +45,13 @@ extension Priority {
 extension TicketStatus {
     /// Maps a project Status option name to the app's statuses.
     public init(optionName: String) {
-        let n = optionName.lowercased()
+        let n = optionName.lowercased().replacingOccurrences(of: "’", with: "'")
         func has(_ words: [String]) -> Bool { words.contains { n.contains($0) } }
         let isDev = n.split { !$0.isLetter }.contains("dev")
-        if has(["done", "complete", "closed", "shipped", "released", "merged"]) { self = .done }
+        // Won't fix and duplicates need no work; ready-for-live and release-ready are already merged.
+        if has(["won't fix", "wont fix", "duplicate"]) { self = .done }
+        else if has(["ready for dev", "prioritised", "prioritized"]) { self = .todo }
+        else if has(["done", "complete", "closed", "shipped", "released", "merged", "ready for live", "release ready"]) { self = .done }
         else if has(["review", "qa", "testing"]) { self = .inReview }
         else if has(["not started", "to do", "todo"]) { self = .todo }
         else if isDev || has(["progress", "doing", "started", "develop"]) { self = .inProgress }

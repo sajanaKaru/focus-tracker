@@ -117,6 +117,9 @@ struct TodayView: View {
         let range = todayRange
         let inProgress = store.workspaceTickets.filter { $0.status == .inProgress || $0.status == .inReview }
         let active = inProgress.filter { filter.matches($0, now: store.now) }
+        // A running timer goes first; the sort is stable so the rest keep their order.
+        let inDev = active.filter { $0.status == .inProgress }.sorted { store.isTracking($0.id) && !store.isTracking($1.id) }
+        let inReview = active.filter { $0.status == .inReview }
         let log = store.log(in: range)
 
         ScrollView {
@@ -166,21 +169,26 @@ struct TodayView: View {
                 if isToday || isFuture { DayPlanCard(selectedTicketID: $selectedTicketID, day: day) }
 
                 if isToday {
+                    FilterBar(filter: $filter, showsCount: false, horizontalPadding: 0)
+
                     VStack(alignment: .leading, spacing: 10) {
-                        SectionTitle(title: "In progress", count: active.count)
-                        FilterBar(filter: $filter, showsCount: false, horizontalPadding: 0)
-                        if active.isEmpty {
+                        SectionTitle(title: "In dev", count: inDev.count)
+                        if inDev.isEmpty {
                             if inProgress.isEmpty {
-                                EmptyHint(text: "Nothing in progress. Start a timer from Tickets.", symbol: "moon.zzz")
+                                EmptyHint(text: "Nothing in dev. Start a timer from Tickets.", symbol: "moon.zzz")
+                            } else if active.isEmpty {
+                                EmptyHint(text: "\(inProgress.count) in dev or code review, but none match these filters.", symbol: "line.3.horizontal.decrease.circle")
                             } else {
-                                EmptyHint(text: "\(inProgress.count) in progress, but none match these filters.", symbol: "line.3.horizontal.decrease.circle")
+                                EmptyHint(text: "Nothing in dev right now.", symbol: "moon.zzz")
                             }
                         }
-                        ForEach(active) { ticket in
-                            TicketRow(ticket: ticket)
-                                .cardStyle(padding: 10, selected: selectedTicketID == ticket.id)
-                                .hoverLift()
-                                .onTapGesture { selectedTicketID = ticket.id }
+                        ticketCards(inDev)
+                    }
+
+                    if !inReview.isEmpty {
+                        VStack(alignment: .leading, spacing: 10) {
+                            SectionTitle(title: "Code review", count: inReview.count)
+                            ticketCards(inReview)
                         }
                     }
                 }
@@ -215,6 +223,16 @@ struct TodayView: View {
             }
         }
         .sheet(item: $editing) { EditLogSheet(target: $0) }
+    }
+
+    @ViewBuilder
+    private func ticketCards(_ tickets: [Ticket]) -> some View {
+        ForEach(tickets) { ticket in
+            TicketRow(ticket: ticket)
+                .cardStyle(padding: 10, selected: selectedTicketID == ticket.id)
+                .hoverLift()
+                .onTapGesture { selectedTicketID = ticket.id }
+        }
     }
 
     @ViewBuilder
