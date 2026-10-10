@@ -46,6 +46,7 @@ public final class AppStore {
     public private(set) var activities: [Activity] = []
     public private(set) var dayPlans: [DayPlan] = []
     public private(set) var actionLog: [ActionLogEntry] = []
+    public private(set) var dismissedFailureIDs: Set<UUID> = []
     public private(set) var remoteOptions = RemoteOptions()
     public private(set) var pullRequests: [PullRequestItem] = []
     public private(set) var pullRequestsState: PullRequestsState = .idle
@@ -1200,7 +1201,6 @@ public final class AppStore {
             if Task.isCancelled { return }
             setActionSync(entryID, .failed(error.localizedDescription), detail: "\(Self.describe(edit, repo: repo, number: number)) failed")
             setUnsynced(ticketID, field: field, to: true)
-            notice = "Couldn't update \(field) on GitHub (\(error.localizedDescription))."
         }
     }
 
@@ -1238,6 +1238,7 @@ public final class AppStore {
     /// Re-sends a failed entry's edit. Returns true when it now succeeded.
     @discardableResult
     public func retry(_ entryID: UUID) async -> Bool {
+        dismissedFailureIDs.remove(entryID)
         guard let n = actionLog.firstIndex(where: { $0.id == entryID }), case .failed = actionLog[n].sync,
               let edit = actionLog[n].remote, let ticketID = actionLog[n].ticketID, let field = actionLog[n].field,
               let gh = ticket(ticketID)?.github, let token = tokenProvider(), !token.isEmpty else { return false }
@@ -1282,6 +1283,10 @@ public final class AppStore {
 
     public var failedActions: [ActionLogEntry] {
         actionLog.filter { if case .failed = $0.sync { true } else { false } }
+    }
+
+    public func dismissFailureBanner() {
+        dismissedFailureIDs.formUnion(failedActions.map(\.id))
     }
 
     @discardableResult
