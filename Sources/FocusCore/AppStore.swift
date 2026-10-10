@@ -474,6 +474,10 @@ public final class AppStore {
             text = number == number.rounded() ? String(Int(number)) : String(number)
             payload = value
             kind = .number
+        case .option(let option):
+            text = option
+            payload = value
+            kind = .select
         }
 
         update(id) { ticket in
@@ -1138,11 +1142,11 @@ public final class AppStore {
     func record(
         _ kind: ActionKind, ticket: Ticket? = nil, field: String? = nil, old: String? = nil, new: String? = nil,
         oldList: [String]? = nil, newList: [String]? = nil, sync: ActionSync = .notApplicable,
-        detail: String? = nil, at date: Date = Date()
+        detail: String? = nil, remote: RemoteEdit? = nil, at date: Date = Date()
     ) -> UUID {
         let entry = ActionLogEntry(
             timestamp: date, kind: kind, ticketID: ticket?.id, ticketKey: ticket?.displayKey, ticketTitle: ticket?.title,
-            field: field, oldValue: old, newValue: new, oldList: oldList, newList: newList, sync: sync, githubDetail: detail
+            field: field, oldValue: old, newValue: new, oldList: oldList, newList: newList, sync: sync, githubDetail: detail, remote: remote
         )
         actionLog.append(entry)
         return entry.id

@@ -42,9 +42,10 @@ public protocol HTTPTransport: Sendable {
     func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse)
 }
 
-public enum ProjectFieldValue: Equatable, Sendable {
+public enum ProjectFieldValue: Codable, Equatable, Sendable {
     case text(String)
     case number(Double)
+    case option(String)
 }
 
 public struct URLSessionTransport: HTTPTransport {
@@ -271,6 +272,8 @@ public struct GitHubClient: Sendable {
             result = try await graphQL(Self.setFieldMutation, variables: ids.merging(["value": ["text": text]]) { $1 })
         case .number(let number):
             result = try await graphQL(Self.setFieldMutation, variables: ids.merging(["value": ["number": number]]) { $1 })
+        case .option:
+            throw GitHubError.invalidResponse
         }
         if let message = try JSONDecoder().decode(FieldLookup.self, from: result).errors?.first?.message {
             throw GitHubError.graphQL(message)

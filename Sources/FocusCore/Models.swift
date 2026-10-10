@@ -161,6 +161,8 @@ public struct Ticket: Identifiable, Codable, Hashable, Sendable {
     public var github: GitHubRef?
     /// Created from the Unplanned button rather than synced from GitHub.
     public var isQuickCapture: Bool?
+    /// Log field names whose last push to GitHub failed; sync keeps the local value for them.
+    public var unsynced: [String]?
 
     public init(
         id: UUID = UUID(),
@@ -179,7 +181,8 @@ public struct Ticket: Identifiable, Codable, Hashable, Sendable {
         createdAt: Date = Date(),
         updatedAt: Date = Date(),
         github: GitHubRef? = nil,
-        isQuickCapture: Bool? = nil
+        isQuickCapture: Bool? = nil,
+        unsynced: [String]? = nil
     ) {
         self.id = id
         self.title = title
@@ -198,6 +201,7 @@ public struct Ticket: Identifiable, Codable, Hashable, Sendable {
         self.updatedAt = updatedAt
         self.github = github
         self.isQuickCapture = isQuickCapture
+        self.unsynced = unsynced
     }
 
     public var displayKey: String {

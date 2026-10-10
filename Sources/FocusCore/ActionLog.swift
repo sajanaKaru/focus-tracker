@@ -34,13 +34,14 @@ public struct ActionLogEntry: Codable, Identifiable, Equatable, Sendable {
     public var newList: [String]?
     public var sync: ActionSync
     public var githubDetail: String?
-
+    /// The GitHub change this entry pushed; lets a failed entry be retried.
+    public var remote: RemoteEdit?
     public init(
         id: UUID = UUID(), timestamp: Date = Date(), kind: ActionKind,
         ticketID: UUID? = nil, ticketKey: String? = nil, ticketTitle: String? = nil,
         field: String? = nil, oldValue: String? = nil, newValue: String? = nil,
         oldList: [String]? = nil, newList: [String]? = nil,
-        sync: ActionSync = .notApplicable, githubDetail: String? = nil
+        sync: ActionSync = .notApplicable, githubDetail: String? = nil, remote: RemoteEdit? = nil
     ) {
         self.id = id
         self.timestamp = timestamp
@@ -55,6 +56,7 @@ public struct ActionLogEntry: Codable, Identifiable, Equatable, Sendable {
         self.newList = newList
         self.sync = sync
         self.githubDetail = githubDetail
+        self.remote = remote
     }
 }
 
