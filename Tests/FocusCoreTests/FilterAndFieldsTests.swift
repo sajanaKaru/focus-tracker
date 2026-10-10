@@ -43,6 +43,17 @@ final class FilterAndFieldsTests: XCTestCase {
         XCTAssertFalse(TicketFilter().isActive)
     }
 
+    func testSourceFilter() {
+        let synced = ticket()
+        let local = Ticket(title: "Local")
+        let both = [synced, local]
+
+        XCTAssertEqual(both.filter { TicketFilter(source: .local).matches($0) }, [local])
+        XCTAssertEqual(both.filter { TicketFilter(source: .github).matches($0) }, [synced])
+        XCTAssertEqual(both.filter { TicketFilter().matches($0) }, both)
+        XCTAssertTrue(TicketFilter(source: .local).isActive)
+    }
+
     func testIssueMilestoneIsDecoded() async throws {
         let body = """
         [{"number": 1, "title": "A", "body": null, "html_url": "https://github.com/me/a/issues/1",

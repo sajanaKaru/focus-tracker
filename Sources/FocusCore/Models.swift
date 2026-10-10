@@ -241,20 +241,28 @@ public struct Ticket: Identifiable, Codable, Hashable, Sendable {
 public struct TicketFilter: Equatable, Sendable {
     public enum MilestoneChoice: Hashable, Sendable { case any, ongoing, none, named(String) }
     public enum SprintChoice: Hashable, Sendable { case any, current, none, named(String) }
+    public enum Source: Hashable, Sendable { case all, local, github }
 
+    public var source: Source = .all
     public var repo: String?
     public var milestone: MilestoneChoice = .any
     public var sprint: SprintChoice = .any
 
-    public init(repo: String? = nil, milestone: MilestoneChoice = .any, sprint: SprintChoice = .any) {
+    public init(source: Source = .all, repo: String? = nil, milestone: MilestoneChoice = .any, sprint: SprintChoice = .any) {
+        self.source = source
         self.repo = repo
         self.milestone = milestone
         self.sprint = sprint
     }
 
-    public var isActive: Bool { repo != nil || milestone != .any || sprint != .any }
+    public var isActive: Bool { source != .all || repo != nil || milestone != .any || sprint != .any }
 
     public func matches(_ ticket: Ticket, now: Date = Date()) -> Bool {
+        switch source {
+        case .all: break
+        case .local: if ticket.github != nil { return false }
+        case .github: if ticket.github == nil { return false }
+        }
         if let repo, ticket.github?.repo.lowercased() != repo.lowercased() { return false }
 
         switch milestone {

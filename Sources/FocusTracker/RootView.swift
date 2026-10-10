@@ -185,7 +185,14 @@ struct RootView: View {
             }
         }
         .sheet(isPresented: $showingNewTicket) {
-            NewTicketSheet { selectedTicketID = $0 }
+            NewTicketSheet { id in
+                // A new local ticket has no sprint or repo, so the default Current-sprint filter would hide it.
+                if let ticket = store.ticket(id), !filter.matches(ticket, now: store.now) {
+                    filter = TicketFilter(source: .local)
+                }
+                selection = .tickets
+                selectedTicketID = id
+            }
         }
         .onChange(of: selection) { planTicketID = nil }
         .onChange(of: store.activeWorkspace) {

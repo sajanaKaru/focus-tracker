@@ -10,9 +10,11 @@ struct FilterBar: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            if showsRepo { repoMenu }
+            if showsRepo { sourceMenu; repoMenu }
             milestoneMenu
+                .disabled(filter.source == .local)
             sprintMenu
+                .disabled(filter.source == .local)
             Spacer()
             if filter.isActive {
                 if showsCount {
@@ -30,6 +32,46 @@ struct FilterBar: View {
         .background(Theme.pageBackground)
     }
 
+    private var sourceChoice: Binding<TicketFilter.Source> {
+        Binding {
+            filter.source
+        } set: { source in
+            if source == .local {
+                // Local tickets have no repo, milestone or sprint.
+                filter = TicketFilter(source: .local)
+                return
+            }
+            let wasLocal = filter.source == .local
+            filter.source = source
+            if wasLocal && store.hasCurrentSprint { filter.sprint = .current }
+        }
+    }
+
+    private var sourceMenu: some View {
+        Menu {
+            Picker("Source", selection: sourceChoice) {
+                Text("All tickets").tag(TicketFilter.Source.all)
+                Text("Local").tag(TicketFilter.Source.local)
+                Text("GitHub").tag(TicketFilter.Source.github)
+            }
+            .pickerStyle(.inline)
+            .labelsHidden()
+        } label: {
+            FilterLabel(title: sourceTitle, symbol: filter.source == .local ? "internaldrive" : "tray.2", active: filter.source != .all)
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+    }
+
+    private var sourceTitle: String {
+        switch filter.source {
+        case .all: "All tickets"
+        case .local: "Local"
+        case .github: "GitHub"
+        }
+    }
+
     private var repoMenu: some View {
         Menu {
             Picker("Repository", selection: $filter.repo) {
@@ -45,6 +87,7 @@ struct FilterBar: View {
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
         .fixedSize()
+        .disabled(filter.source == .local)
     }
 
     private var milestoneMenu: some View {
