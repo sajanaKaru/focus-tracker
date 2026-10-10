@@ -97,4 +97,45 @@ final class ActionLogTests: XCTestCase {
         XCTAssertEqual(kinds, [.ticketCreate, .ticketDelete])
         XCTAssertEqual(store.actionLog.last?.ticketTitle, "Gone soon")
     }
+
+    func testTimerAndTimeEntryActionsAreLogged() {
+        let (store, _) = makeStore()
+        let t = store.addTicket(title: "A")
+
+        store.start(t.id)
+        store.stop()
+        store.addManualEntry(ticketID: t.id, duration: 1800)
+        let entryID = store.entries.last!.id
+        store.deleteEntry(entryID)
+
+        let fields = store.actionLog.filter { $0.ticketID == t.id && ($0.kind == .timer || $0.kind == .timeEntry) }.compactMap(\.field)
+        XCTAssertEqual(fields, ["Timer started", "Timer stopped", "Manual entry added", "Entry deleted"])
+        XCTAssertEqual(store.actionLog.first { $0.field == "Manual entry added" }?.newValue, "30 min")
+    }
+
+    func testNotesPlanCommentsAndDayPlanAreLogged() {
+        let (store, _) = makeStore()
+        let t = store.addTicket(title: "A")
+
+        store.addNote(ticketID: t.id, text: "remember")
+        store.deleteNote(store.notes[0].id)
+        store.addPlanComment(ticketID: t.id, text: "do x")
+        store.deletePlanComment(store.planComments[0].id)
+        store.togglePlanned(t.id, on: Date())
+        store.togglePlanned(t.id, on: Date())
+
+        let fields = store.actionLog.filter { [.note, .planComment, .dayPlan].contains($0.kind) }.compactMap(\.field)
+        XCTAssertEqual(fields, ["Note added", "Note deleted", "Plan comment added", "Plan comment deleted", "Added to day plan", "Removed from day plan"])
+        XCTAssertEqual(store.actionLog.first { $0.field == "Note added" }?.newValue, "remember")
+    }
+
+    func testActivityActionsAreLogged() {
+        let (store, _) = makeStore()
+        store.startActivity(kind: .call, title: "Standup")
+        store.stopActivity()
+        store.deleteActivity(store.activities[0].id)
+
+        let fields = store.actionLog.filter { $0.kind == .activity }.compactMap(\.field)
+        XCTAssertEqual(fields, ["Activity started", "Activity stopped", "Activity deleted"])
+    }
 }

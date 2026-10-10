@@ -535,10 +535,14 @@ public final class AppStore {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, ticket(ticketID) != nil else { return }
         planComments.append(PlanComment(ticketID: ticketID, text: trimmed, createdAt: date))
+        record(.planComment, ticket: ticket(ticketID), field: "Plan comment added", new: trimmed)
         save()
     }
 
     public func deletePlanComment(_ id: UUID) {
+        if let c = planComments.first(where: { $0.id == id }) {
+            record(.planComment, ticket: ticket(c.ticketID), field: "Plan comment deleted", old: c.text)
+        }
         planComments.removeAll { $0.id == id }
         save()
     }
@@ -572,10 +576,12 @@ public final class AppStore {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, ticket(ticketID) != nil else { return }
         notes.append(TicketNote(ticketID: ticketID, text: trimmed, createdAt: date))
+        record(.note, ticket: ticket(ticketID), field: "Note added", new: trimmed)
         save()
     }
 
     public func deleteNote(_ id: UUID) {
+        if let n = notes.first(where: { $0.id == id }) { record(.note, ticket: ticket(n.ticketID), field: "Note deleted", old: n.text) }
         notes.removeAll { $0.id == id }
         save()
     }
@@ -588,6 +594,7 @@ public final class AppStore {
         stopActivity()
         let started = Date()
         entries.append(TimeEntry(ticketID: ticketID, start: started))
+        record(.timer, ticket: tickets[i], field: "Timer started", at: started)
         if tickets[i].status == .backlog || tickets[i].status == .todo {
             tickets[i].status = .inProgress
             tickets[i].updatedAt = started
@@ -600,6 +607,7 @@ public final class AppStore {
     public func stop(at end: Date = Date()) {
         guard let i = entries.lastIndex(where: { $0.end == nil }) else { return }
         entries[i].end = max(end, entries[i].start)
+        record(.timer, ticket: ticket(entries[i].ticketID), field: "Timer stopped", new: Self.minutesText(entries[i].end!.timeIntervalSince(entries[i].start)), at: entries[i].end!)
         tickTask?.cancel()
         tickTask = nil
         now = Date()
@@ -613,10 +621,14 @@ public final class AppStore {
     public func addManualEntry(ticketID: UUID, duration: TimeInterval, endingAt end: Date = Date()) {
         guard duration > 0, ticket(ticketID) != nil else { return }
         entries.append(TimeEntry(ticketID: ticketID, start: end.addingTimeInterval(-duration), end: end))
+        record(.timeEntry, ticket: ticket(ticketID), field: "Manual entry added", new: Self.minutesText(duration))
         save()
     }
 
     public func deleteEntry(_ id: UUID) {
+        if let e = entries.first(where: { $0.id == id }) {
+            record(.timeEntry, ticket: ticket(e.ticketID), field: "Entry deleted", old: Self.minutesText((e.end ?? now).timeIntervalSince(e.start)))
+        }
         entries.removeAll { $0.id == id }
         if activeEntry == nil && activeActivity == nil { tickTask?.cancel(); tickTask = nil }
         save()
@@ -627,6 +639,11 @@ public final class AppStore {
         guard let i = entries.firstIndex(where: { $0.id == id }) else { return }
         let newEnd = entries[i].end == nil ? nil : end
         guard start < (newEnd ?? now) else { return }
+        record(
+            .timeEntry, ticket: ticket(entries[i].ticketID), field: "Entry edited",
+            old: "\(entries[i].start.formatted()) – \((entries[i].end ?? now).formatted())",
+            new: "\(start.formatted()) – \((newEnd ?? now).formatted())"
+        )
         entries[i].start = start
         entries[i].end = newEnd
         save()
@@ -651,6 +668,7 @@ public final class AppStore {
         stopActivity()
         let started = Date()
         activities.append(Activity(kind: kind, title: Self.activityTitle(title, kind: kind), start: started))
+        record(.activity, field: "Activity started", new: activities.last?.title)
         now = started
         startTicking()
         save()
@@ -659,6 +677,7 @@ public final class AppStore {
     public func stopActivity(at end: Date = Date()) {
         guard let i = activities.lastIndex(where: { $0.end == nil }) else { return }
         activities[i].end = max(end, activities[i].start)
+        record(.activity, field: "Activity stopped", old: activities[i].title)
         if activeEntry == nil { tickTask?.cancel(); tickTask = nil }
         now = Date()
         save()
@@ -668,10 +687,12 @@ public final class AppStore {
         guard end > start else { return }
         if let calendarEventID, activities.contains(where: { $0.calendarEventID == calendarEventID && $0.start == start }) { return }
         activities.append(Activity(kind: kind, title: Self.activityTitle(title, kind: kind), start: start, end: end, calendarEventID: calendarEventID))
+        record(.activity, field: "Activity added", new: activities.last?.title)
         save()
     }
 
     public func deleteActivity(_ id: UUID) {
+        if let a = activities.first(where: { $0.id == id }) { record(.activity, field: "Activity deleted", old: a.title) }
         activities.removeAll { $0.id == id }
         if activeEntry == nil && activeActivity == nil { tickTask?.cancel(); tickTask = nil }
         save()
@@ -1005,12 +1026,15 @@ public final class AppStore {
         if let index = dayPlans.firstIndex(where: { calendar.isDate($0.day, inSameDayAs: day) }) {
             if let position = dayPlans[index].ticketIDs.firstIndex(of: ticketID) {
                 dayPlans[index].ticketIDs.remove(at: position)
+                record(.dayPlan, ticket: ticket(ticketID), field: "Removed from day plan")
             } else {
                 dayPlans[index].ticketIDs.append(ticketID)
                 dayPlans[index].deferredTicketIDs?.removeAll { $0 == ticketID }
+                record(.dayPlan, ticket: ticket(ticketID), field: "Added to day plan")
             }
         } else {
             dayPlans.append(DayPlan(day: calendar.startOfDay(for: day), ticketIDs: [ticketID]))
+            record(.dayPlan, ticket: ticket(ticketID), field: "Added to day plan")
         }
         save()
     }
@@ -1060,6 +1084,7 @@ public final class AppStore {
         if let j = dayPlans.firstIndex(where: { calendar.isDate($0.day, inSameDayAs: next) }), !dayPlans[j].ticketIDs.contains(ticketID) {
             dayPlans[j].ticketIDs.append(ticketID)
         }
+        record(.dayPlan, ticket: ticket(ticketID), field: "Deferred to tomorrow")
         save()
     }
 
@@ -1081,6 +1106,8 @@ public final class AppStore {
     }
 
     // MARK: - Action log
+
+    private static func minutesText(_ seconds: TimeInterval) -> String { "\(Int((seconds / 60).rounded())) min" }
 
     @discardableResult
     func record(
