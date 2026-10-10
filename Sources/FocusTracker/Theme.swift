@@ -42,6 +42,7 @@ enum Theme {
     static let activityGradient = LinearGradient(colors: [Theme.teal, Color(hex: 0x06B6D4)], startPoint: .topLeading, endPoint: .bottomTrailing)
 
     static let pageBackground = Color.adaptive(light: 0xF6F6FB, dark: 0x14141C)
+    static let sidebarBackground = Color.adaptive(light: 0xECECF4, dark: 0x1A1A24)
     static let cardBackground = Color.adaptive(light: 0xFFFFFF, dark: 0x1C1C26)
     static let radius: CGFloat = 16
 }

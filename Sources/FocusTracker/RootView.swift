@@ -62,6 +62,20 @@ private struct SidebarRow: View {
     }
 }
 
+/// Paints the whole title bar (window buttons and toolbar) in the sidebar colour with a border underneath.
+private struct TitleBarStrip: View {
+    var body: some View {
+        GeometryReader { proxy in
+            let height = proxy.safeAreaInsets.top > 0 ? proxy.safeAreaInsets.top : 52
+            Theme.sidebarBackground
+                .frame(height: height)
+                .overlay(alignment: .bottom) { Rectangle().fill(Color.primary.opacity(0.12)).frame(height: 1) }
+        }
+        .ignoresSafeArea()
+        .allowsHitTesting(false)
+    }
+}
+
 struct RootView: View {
     @Environment(AppStore.self) private var store
     @State private var selection: SidebarItem? = .today
@@ -77,6 +91,7 @@ struct RootView: View {
                 WorkspaceRail()
                 sidebarColumn
             }
+            .background(Theme.sidebarBackground.ignoresSafeArea())
             .navigationSplitViewColumnWidth(min: 280, ideal: 290)
         } detail: {
             VStack(spacing: 0) {
@@ -92,6 +107,8 @@ struct RootView: View {
                 }
             }
         }
+        .toolbarBackground(.hidden, for: .windowToolbar)
+        .overlay(alignment: .top) { TitleBarStrip() }
         .toolbar {
             ToolbarItemGroup {
                 Button { showingNewTicket = true } label: { Label("New Ticket", systemImage: "plus") }
