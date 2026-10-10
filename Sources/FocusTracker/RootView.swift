@@ -9,6 +9,7 @@ enum SidebarItem: String, CaseIterable, Identifiable {
     case pullRequests = "Pull Requests"
     case specialWork = "Data & Scripts"
     case reports = "Reports"
+    case actionLog = "Action Log"
 
     var id: String { rawValue }
 
@@ -20,6 +21,7 @@ enum SidebarItem: String, CaseIterable, Identifiable {
         case .pullRequests: "arrow.triangle.pull"
         case .specialWork: "externaldrive.badge.timemachine"
         case .reports: "chart.bar"
+        case .actionLog: "list.clipboard"
         }
     }
 }
@@ -28,6 +30,7 @@ private struct SidebarRow: View {
     let item: SidebarItem
     let selected: Bool
     var badge: Int?
+    var badgeAlert = false
     let action: () -> Void
     @State private var hovering = false
 
@@ -43,10 +46,10 @@ private struct SidebarRow: View {
                 if let badge, badge > 0 {
                     Text(badge.formatted())
                         .font(.caption2.weight(.semibold).monospacedDigit())
-                        .foregroundStyle(selected ? Theme.accent : Color.secondary)
+                        .foregroundStyle(badgeAlert ? Theme.danger : (selected ? Theme.accent : Color.secondary))
                         .padding(.horizontal, 7)
                         .padding(.vertical, 2)
-                        .background(selected ? Theme.accent.opacity(0.15) : Color.primary.opacity(0.07), in: Capsule())
+                        .background(badgeAlert ? Theme.danger.opacity(0.15) : (selected ? Theme.accent.opacity(0.15) : Color.primary.opacity(0.07)), in: Capsule())
                 }
             }
             .foregroundStyle(selected ? Theme.accent : Color.primary)
@@ -86,6 +89,7 @@ struct RootView: View {
     @State private var planTicketID: UUID?
     @State private var showingNewTicket = false
     @State private var filter = TicketFilter()
+    @State private var logFilter = ActionLogFilter()
     @State private var appliedDefaultSprint = false
     @State private var searchText = ""
     @FocusState private var searchFocused: Bool
@@ -194,7 +198,7 @@ struct RootView: View {
             .padding(.top, 8)
             .padding(.bottom, 10)
             ForEach(SidebarItem.allCases) { item in
-                SidebarRow(item: item, selected: (selection ?? .today) == item, badge: badge(for: item)) { selection = item }
+                SidebarRow(item: item, selected: (selection ?? .today) == item, badge: badge(for: item), badgeAlert: item == .actionLog) { selection = item }
             }
             Spacer()
             SyncStatusView().padding(.bottom, 12)
@@ -208,6 +212,7 @@ struct RootView: View {
         case .tickets: store.currentSprintTickets.count
         case .pullRequests: store.workspacePullRequests.count
         case .specialWork: store.openSpecialWorkCount
+        case .actionLog: store.failedActions.count
         default: nil
         }
     }
@@ -236,6 +241,7 @@ struct RootView: View {
         case .pullRequests: PullRequestsView()
         case .specialWork: SpecialWorkView(selectedTicketID: $selectedTicketID)
         case .reports: ReportsView()
+        case .actionLog: ActionLogView(selectedTicketID: $selectedTicketID, filter: $logFilter)
         }
     }
 
