@@ -46,6 +46,7 @@ public final class AppStore {
     public private(set) var activities: [Activity] = []
     public private(set) var dayPlans: [DayPlan] = []
     public private(set) var actionLog: [ActionLogEntry] = []
+    public private(set) var remoteOptions = RemoteOptions()
     public private(set) var pullRequests: [PullRequestItem] = []
     public private(set) var pullRequestsState: PullRequestsState = .idle
     public private(set) var githubLogin: String?
@@ -61,8 +62,9 @@ public final class AppStore {
 
     @ObservationIgnored private let storeURL: URL
     @ObservationIgnored private let defaults: UserDefaults
-    @ObservationIgnored private let transport: HTTPTransport
-    @ObservationIgnored private let tokenProvider: () -> String?
+    @ObservationIgnored let transport: HTTPTransport
+    @ObservationIgnored let tokenProvider: () -> String?
+    @ObservationIgnored private var lastOptionsLoad: Date?
     @ObservationIgnored private let idleSeconds: () -> TimeInterval
     @ObservationIgnored private var tickTask: Task<Void, Never>?
     @ObservationIgnored private var autoSyncTask: Task<Void, Never>?
@@ -455,7 +457,16 @@ public final class AppStore {
     }
 
     public func setStatus(_ id: UUID, _ status: TicketStatus) {
-        update(id) { $0.status = status }
+        guard let t = ticket(id) else { return }
+        if t.status != status {
+            if let field = t.projectStatusField,
+               let option = remoteOptions.projectStatus[field.project]?.first(where: { TicketStatus(optionName: $0.name) == status }) {
+                setStatusOption(id, project: field.project, option: option.name)
+            } else {
+                update(id) { $0.status = status }
+                syncIssueState(id, from: t.status, to: status)
+            }
+        }
         if status == .done && isTracking(id) { stop() }
     }
 
@@ -589,10 +600,7 @@ public final class AppStore {
         let started = Date()
         entries.append(TimeEntry(ticketID: ticketID, start: started))
         record(.timer, ticket: tickets[i], field: "Timer started", at: started)
-        if tickets[i].status == .backlog || tickets[i].status == .todo {
-            tickets[i].status = .inProgress
-            tickets[i].updatedAt = started
-        }
+        if tickets[i].status == .backlog || tickets[i].status == .todo { setStatus(ticketID, .inProgress) }
         now = started
         startTicking()
         save()
@@ -1133,6 +1141,14 @@ public final class AppStore {
 
     func insertTicketForTest(_ ticket: Ticket) { tickets.append(ticket) }
 
+    func storeOptions(_ options: RemoteOptions) {
+        remoteOptions = options
+        lastOptionsLoad = Date()
+        save()
+    }
+
+    var optionsAreFresh: Bool { lastOptionsLoad.map { Date().timeIntervalSince($0) < 600 } ?? false }
+
     /// Applies `apply` locally, logs it, then pushes `remote` to GitHub when the ticket is linked and a token is set.
     func edit(_ id: UUID, _ change: FieldChange, remote: RemoteEdit?, delay: Duration = .zero, apply: (inout Ticket) -> Void) {
         guard let i = tickets.firstIndex(where: { $0.id == id }) else { return }
@@ -1283,6 +1299,7 @@ public final class AppStore {
         var activities: [Activity]?
         var dayPlans: [DayPlan]?
         var actionLog: [ActionLogEntry]?
+        var remoteOptions: RemoteOptions?
     }
 
     /// Older files stored one free-text `notes` string per ticket.
@@ -1307,6 +1324,7 @@ public final class AppStore {
             planComments = snapshot.planComments ?? []
             dayPlans = snapshot.dayPlans ?? []
             actionLog = snapshot.actionLog ?? []
+            remoteOptions = snapshot.remoteOptions ?? RemoteOptions()
             if let saved = snapshot.notes {
                 notes = saved
             } else if let legacy = try? decoder.decode(LegacySnapshot.self, from: data) {
@@ -1326,7 +1344,7 @@ public final class AppStore {
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         do {
             try FileManager.default.createDirectory(at: storeURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-            let data = try encoder.encode(Snapshot(tickets: tickets, entries: entries, notes: notes, planComments: planComments, activities: activities, dayPlans: dayPlans, actionLog: actionLog))
+            let data = try encoder.encode(Snapshot(tickets: tickets, entries: entries, notes: notes, planComments: planComments, activities: activities, dayPlans: dayPlans, actionLog: actionLog, remoteOptions: remoteOptions))
             try data.write(to: storeURL, options: .atomic)
         } catch {
             notice = "Could not save data: \(error.localizedDescription)"
