@@ -68,6 +68,7 @@ public final class AppStore {
     @ObservationIgnored private var autoSyncTask: Task<Void, Never>?
     @ObservationIgnored private var lastRefresh: [UUID: Date] = [:]
     @ObservationIgnored private var pendingPushes: [String: Task<Void, Never>] = [:]
+    @ObservationIgnored private var pendingEntryIDs: [String: UUID] = [:]
 
     nonisolated public static var defaultStoreURL: URL {
         FileManager.default
@@ -463,6 +464,7 @@ public final class AppStore {
         let payload: ProjectFieldValue
         let kind: CustomField.Kind
         let text: String
+        let oldText = ticket(id)?.fields?.first { $0.project == project && $0.name == name }?.value ?? "None"
         switch value {
         case .text(let raw):
             text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -484,20 +486,37 @@ public final class AppStore {
             ticket.fields = fields
         }
 
-        guard let gh = ticket(id)?.github, let token = tokenProvider(), !token.isEmpty else { return }
+        let canPush = ticket(id)?.github != nil && !(tokenProvider() ?? "").isEmpty
         let key = "\(id)|\(project)|\(name)"
+        // Debounced edits share one pending entry so typing doesn't flood the log.
+        if canPush, let existing = pendingEntryIDs[key], let i = actionLog.firstIndex(where: { $0.id == existing }), actionLog[i].sync == .pending {
+            actionLog[i].newValue = text
+            actionLog[i].timestamp = Date()
+        } else {
+            let entryID = record(.ticketEdit, ticket: ticket(id), field: name, old: oldText, new: text, sync: canPush ? .pending : .notApplicable)
+            if canPush { pendingEntryIDs[key] = entryID }
+        }
+        save()
+
+        guard canPush, let gh = ticket(id)?.github, let token = tokenProvider() else { return }
         pendingPushes[key]?.cancel()
         pendingPushes[key] = Task { [weak self] in
             if delay > .zero { try? await Task.sleep(for: delay) }
             guard !Task.isCancelled, let self else { return }
+            let entryID = pendingEntryIDs[key]
             let client = GitHubClient(token: token, transport: transport)
             do {
                 try await client.updateProjectField(repo: gh.repo, number: gh.number, project: project, field: name, value: payload)
+                if let entryID { setActionSync(entryID, .synced(Date()), detail: "Updated \(name) in project \(project)") }
             } catch {
+                if let entryID { setActionSync(entryID, .failed(error.localizedDescription), detail: "Update of \(name) in project \(project) failed") }
                 notice = "Couldn't update \(name) on GitHub (\(error.localizedDescription)). Writing needs a token with project write access."
                 await refreshTicket(id, minimumInterval: 0)
             }
-            if !Task.isCancelled { pendingPushes[key] = nil }
+            if !Task.isCancelled {
+                pendingPushes[key] = nil
+                pendingEntryIDs[key] = nil
+            }
         }
     }
 
@@ -557,12 +576,16 @@ public final class AppStore {
             return false
         }
         let body = pending.map(\.text).joined(separator: Self.planCommentSeparator)
+        let entryID = record(.planComment, ticket: ticket(ticketID), field: "Plan posted to GitHub", new: body, sync: .pending)
+        save()
         do {
             try await GitHubClient(token: token, transport: transport).postComment(repo: gh.repo, number: gh.number, body: body)
         } catch {
+            setActionSync(entryID, .failed(error.localizedDescription))
             notice = "Couldn't post the comment (\(error.localizedDescription)). Posting needs a token with issues write access."
             return false
         }
+        setActionSync(entryID, .synced(Date()), detail: "Comment posted on \(gh.repo)#\(gh.number)")
         let posted = Set(pending.map(\.id))
         let date = Date()
         for i in planComments.indices where posted.contains(planComments[i].id) { planComments[i].postedAt = date }
@@ -1104,6 +1127,8 @@ public final class AppStore {
         dayPlans[i].ignoredNewTicketIDs = ignored
         save()
     }
+
+    func insertTicketForTest(_ ticket: Ticket) { tickets.append(ticket) }
 
     // MARK: - Action log
 

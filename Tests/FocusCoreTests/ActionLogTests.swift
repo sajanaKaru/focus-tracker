@@ -138,4 +138,72 @@ final class ActionLogTests: XCTestCase {
         let fields = store.actionLog.filter { $0.kind == .activity }.compactMap(\.field)
         XCTAssertEqual(fields, ["Activity started", "Activity stopped", "Activity deleted"])
     }
+
+    private func makeStore(status: Int, body: String = "{}") -> AppStore {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("ft-\(UUID().uuidString).json")
+        return AppStore(
+            storeURL: url, defaults: UserDefaults(suiteName: "ft-\(UUID().uuidString)")!,
+            transport: ScriptedTransport { _ in (status, body) }, tokenProvider: { "t" }
+        )
+    }
+
+    func testPostPlanSuccessMarksEntrySynced() async {
+        let store = makeStore(status: 201)
+        store.insertTicketForTest(Ticket(title: "A", github: GitHubRef(repo: "me/a", number: 1, url: "u")))
+        let id = store.tickets[0].id
+        store.addPlanComment(ticketID: id, text: "plan")
+
+        let ok = await store.postPlan(id)
+
+        XCTAssertTrue(ok)
+        let entry = store.actionLog.last { $0.field == "Plan posted to GitHub" }!
+        if case .synced = entry.sync {} else { XCTFail("expected synced, got \(entry.sync)") }
+    }
+
+    func testPostPlanFailureMarksEntryFailed() async {
+        let store = makeStore(status: 403)
+        store.insertTicketForTest(Ticket(title: "A", github: GitHubRef(repo: "me/a", number: 1, url: "u")))
+        let id = store.tickets[0].id
+        store.addPlanComment(ticketID: id, text: "plan")
+
+        let ok = await store.postPlan(id)
+
+        XCTAssertFalse(ok)
+        XCTAssertEqual(store.failedActions.count, 1)
+        XCTAssertEqual(store.failedActions[0].field, "Plan posted to GitHub")
+    }
+
+    func testProjectFieldPushIsCoalescedAndLogged() {
+        let store = makeStore(status: 500)
+        let field = CustomField(name: "RCA", value: "old", kind: .text, project: "P")
+        store.insertTicketForTest(Ticket(title: "A", fields: [field], github: GitHubRef(repo: "me/a", number: 1, url: "u")))
+        let id = store.tickets[0].id
+
+        store.setProjectField(id, name: "RCA", project: "P", to: .text("a"), delay: .milliseconds(200))
+        store.setProjectField(id, name: "RCA", project: "P", to: .text("ab"), delay: .milliseconds(200))
+
+        let entries = store.actionLog.filter { $0.field == "RCA" }
+        XCTAssertEqual(entries.count, 1)
+        XCTAssertEqual(entries[0].oldValue, "old")
+        XCTAssertEqual(entries[0].newValue, "ab")
+        XCTAssertEqual(entries[0].sync, .pending)
+    }
+
+    func testProjectFieldOnLocalTicketIsNotApplicable() {
+        let (store, _) = makeStore()
+        let t = store.addTicket(title: "Local")
+        store.setProjectField(t.id, name: "RCA", project: "P", to: .text("x"))
+
+        let entry = store.actionLog.last { $0.field == "RCA" }!
+        XCTAssertEqual(entry.sync, .notApplicable)
+    }
+}
+
+private struct ScriptedTransport: HTTPTransport {
+    let handler: @Sendable (URLRequest) -> (Int, String)
+
+    func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+        let (code, body) = handler(request)
+        return (Data(body.utf8), HTTPURLResponse(url: request.url!, statusCode: code, httpVersion: nil, headerFields: [:])!)
+    }
 }
