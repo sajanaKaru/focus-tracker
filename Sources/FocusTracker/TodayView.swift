@@ -5,6 +5,7 @@ import SwiftUI
 struct TodayView: View {
     @Environment(AppStore.self) private var store
     @Binding var selectedTicketID: UUID?
+    @Binding var filter: TicketFilter
     @State private var sheet: TodaySheet?
     @State private var editing: LogEdit?
     /// nil follows the current day, including across midnight.
@@ -114,7 +115,8 @@ struct TodayView: View {
 
     var body: some View {
         let range = todayRange
-        let active = store.workspaceTickets.filter { $0.status == .inProgress || $0.status == .inReview }
+        let inProgress = store.workspaceTickets.filter { $0.status == .inProgress || $0.status == .inReview }
+        let active = inProgress.filter { filter.matches($0, now: store.now) }
         let log = store.log(in: range)
 
         ScrollView {
@@ -166,8 +168,13 @@ struct TodayView: View {
                 if isToday {
                     VStack(alignment: .leading, spacing: 10) {
                         SectionTitle(title: "In progress", count: active.count)
+                        FilterBar(filter: $filter, showsCount: false, horizontalPadding: 0)
                         if active.isEmpty {
-                            EmptyHint(text: "Nothing in progress. Start a timer from Tickets.", symbol: "moon.zzz")
+                            if inProgress.isEmpty {
+                                EmptyHint(text: "Nothing in progress. Start a timer from Tickets.", symbol: "moon.zzz")
+                            } else {
+                                EmptyHint(text: "\(inProgress.count) in progress, but none match these filters.", symbol: "line.3.horizontal.decrease.circle")
+                            }
                         }
                         ForEach(active) { ticket in
                             TicketRow(ticket: ticket)

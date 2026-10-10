@@ -90,6 +90,8 @@ struct RootView: View {
     @State private var showingNewTicket = false
     @State private var filter = TicketFilter()
     @State private var logFilter = ActionLogFilter()
+    @State private var todayFilter = TicketFilter()
+    @State private var appliedDefaultTodayMilestone = false
     @State private var appliedDefaultSprint = false
     @State private var searchText = ""
     @FocusState private var searchFocused: Bool
@@ -188,6 +190,7 @@ struct RootView: View {
         .onChange(of: selection) { planTicketID = nil }
         .onChange(of: store.activeWorkspace) {
             filter.repo = nil
+            todayFilter.repo = nil
             selectedTicketID = nil
         }
     }
@@ -240,7 +243,9 @@ struct RootView: View {
     @ViewBuilder
     private var sidebarContent: some View {
         switch selection ?? .today {
-        case .today: TodayView(selectedTicketID: $selectedTicketID)
+        case .today:
+            TodayView(selectedTicketID: $selectedTicketID, filter: $todayFilter)
+                .task(id: store.hasOpenMilestone) { applyDefaultTodayMilestone() }
         case .tickets:
             filtered { TicketsView(selectedTicketID: $selectedTicketID, filter: filter) }
         case .board:
@@ -266,6 +271,13 @@ struct RootView: View {
         guard !appliedDefaultSprint, store.hasCurrentSprint else { return }
         appliedDefaultSprint = true
         if filter.sprint == .any { filter.sprint = .current }
+    }
+
+    /// Once per launch, Today's In progress list starts on the ongoing (open) milestone; later changes are the user's.
+    private func applyDefaultTodayMilestone() {
+        guard !appliedDefaultTodayMilestone, store.hasOpenMilestone else { return }
+        appliedDefaultTodayMilestone = true
+        if todayFilter.milestone == .any { todayFilter.milestone = .ongoing }
     }
 }
 

@@ -121,6 +121,10 @@ public final class AppStore {
         tickets.contains { $0.sprints.contains { $0.isCurrent(at: now) } }
     }
 
+    public var hasOpenMilestone: Bool {
+        workspaceTickets.contains { $0.milestone?.isOpen == true }
+    }
+
     public func setGitHubLogin(_ login: String) {
         githubLogin = login
         defaults.set(login, forKey: PrefKey.githubLogin)

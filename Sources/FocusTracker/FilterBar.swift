@@ -6,6 +6,7 @@ struct FilterBar: View {
     @Binding var filter: TicketFilter
     var showsRepo = true
     var showsCount = true
+    var horizontalPadding: CGFloat = 16
 
     var body: some View {
         HStack(spacing: 8) {
@@ -24,7 +25,7 @@ struct FilterBar: View {
                     .controlSize(.small)
             }
         }
-        .padding(.horizontal, 16)
+        .padding(.horizontal, horizontalPadding)
         .padding(.vertical, 8)
         .background(Theme.pageBackground)
     }
