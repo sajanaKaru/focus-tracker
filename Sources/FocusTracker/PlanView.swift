@@ -30,7 +30,7 @@ struct PlanPage: View {
                             .foregroundStyle(.secondary)
                     }
                     ForEach(comments) { comment in
-                        PlanCommentRow(comment: comment) { store.deletePlanComment(comment.id) }
+                        PlanCommentRow(comment: comment, canPost: ticket.github != nil) { store.deletePlanComment(comment.id) }
                     }
                     PlanCommentComposer(ticketID: ticketID).id(ticketID)
                 }
@@ -77,18 +77,42 @@ struct PlanPage: View {
 }
 
 private struct PlanCommentRow: View {
+    @Environment(AppStore.self) private var store
     let comment: PlanComment
+    let canPost: Bool
     var onDelete: () -> Void
+    @State private var editing = false
+    @State private var confirmingPost = false
+    @State private var posting = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 6) {
+            HStack(spacing: 8) {
                 Text(comment.createdAt.formatted(date: .abbreviated, time: .shortened))
                 if let postedAt = comment.postedAt {
                     Label("Posted \(postedAt.formatted(date: .abbreviated, time: .shortened))", systemImage: "checkmark.circle.fill")
                         .foregroundStyle(Theme.success)
                 }
                 Spacer()
+                if comment.postedAt == nil {
+                    Button { editing = true } label: { Image(systemName: "pencil") }
+                        .buttonStyle(.borderless)
+                        .help("Edit comment")
+                        .accessibilityLabel("Edit comment")
+                    if canPost {
+                        Button { confirmingPost = true } label: {
+                            if posting {
+                                ProgressView().controlSize(.small)
+                            } else {
+                                Label("Post", systemImage: "paperplane.fill")
+                            }
+                        }
+                        .buttonStyle(.borderless)
+                        .foregroundStyle(Theme.accent)
+                        .disabled(posting)
+                        .help("Post only this comment to GitHub")
+                    }
+                }
                 DeleteButton(title: "Delete this comment?", help: "Delete comment", action: onDelete)
             }
             .font(.caption)
@@ -96,24 +120,85 @@ private struct PlanCommentRow: View {
             MarkdownPreview(markdown: comment.text)
         }
         .padding(.vertical, 4)
+        .sheet(isPresented: $editing) { EditPlanCommentSheet(comment: comment) }
+        .confirmationDialog(
+            "Post this comment to \(store.ticket(comment.ticketID)?.displayKey ?? "GitHub")?",
+            isPresented: $confirmingPost, titleVisibility: .visible
+        ) {
+            Button("Post comment") {
+                Task {
+                    posting = true
+                    await store.postPlan(comment.ticketID, only: comment.id)
+                    posting = false
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("It is posted on its own, separate from the other drafts.")
+        }
     }
 }
 
-/// Write/Preview editor that adds a comment to the plan.
+private struct EditPlanCommentSheet: View {
+    @Environment(AppStore.self) private var store
+    @Environment(\.dismiss) private var dismiss
+    let comment: PlanComment
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Edit comment").font(.title3.weight(.semibold))
+            PlanCommentEditor(initial: comment.text, submitTitle: "Save", onCancel: { dismiss() }) { text in
+                store.updatePlanComment(comment.id, text: text)
+                dismiss()
+            }
+        }
+        .padding(20)
+        .frame(width: 640)
+    }
+}
+
+/// Adds a new comment to the plan.
 private struct PlanCommentComposer: View {
     @Environment(AppStore.self) private var store
     let ticketID: UUID
+
+    var body: some View {
+        PlanCommentEditor(submitTitle: "Add comment", resetsAfterSubmit: true) { text in
+            store.addPlanComment(ticketID: ticketID, text: text)
+        }
+    }
+}
+
+/// Write/Preview Markdown editor used to add and to edit plan comments.
+private struct PlanCommentEditor: View {
+    let initial: String
+    let submitTitle: String
+    let resetsAfterSubmit: Bool
+    let onCancel: (() -> Void)?
+    let onSubmit: (String) -> Void
 
     private enum Mode: String, CaseIterable, Identifiable {
         case write = "Write", preview = "Preview"
         var id: String { rawValue }
     }
 
-    @State private var draft = ""
+    @State private var draft: String
     @State private var mode = Mode.write
     @State private var controller = MarkdownEditorController()
 
+    init(initial: String = "", submitTitle: String, resetsAfterSubmit: Bool = false, onCancel: (() -> Void)? = nil, onSubmit: @escaping (String) -> Void) {
+        self.initial = initial
+        self.submitTitle = submitTitle
+        self.resetsAfterSubmit = resetsAfterSubmit
+        self.onCancel = onCancel
+        self.onSubmit = onSubmit
+        _draft = State(initialValue: initial)
+    }
+
     private var isEmpty: Bool { draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    private var isUnchanged: Bool {
+        !initial.isEmpty && draft.trimmingCharacters(in: .whitespacesAndNewlines) == initial.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -146,9 +231,12 @@ private struct PlanCommentComposer: View {
                     .font(.caption)
                     .foregroundStyle(.tertiary)
                 Spacer()
-                Button(action: submit) { ShortcutLabel(title: "Add comment", keys: "⌘↩") }
+                if let onCancel {
+                    Button("Cancel", action: onCancel).keyboardShortcut(.cancelAction)
+                }
+                Button(action: submit) { ShortcutLabel(title: submitTitle, keys: "⌘↩") }
                     .keyboardShortcut(.return, modifiers: .command)
-                    .disabled(isEmpty)
+                    .disabled(isEmpty || isUnchanged)
             }
         }
     }
@@ -182,9 +270,11 @@ private struct PlanCommentComposer: View {
 
     private func submit() {
         guard !isEmpty else { return }
-        store.addPlanComment(ticketID: ticketID, text: draft)
-        draft = ""
-        mode = .write
+        onSubmit(draft)
+        if resetsAfterSubmit {
+            draft = ""
+            mode = .write
+        }
     }
 }
 

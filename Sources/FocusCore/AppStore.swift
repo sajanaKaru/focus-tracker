@@ -549,17 +549,32 @@ public final class AppStore {
         save()
     }
 
-    /// Posts all unposted plan comments as one GitHub comment and marks them posted; on failure sets `notice` and returns false.
+    /// Edits a draft; posted comments are locked because GitHub already has the old text.
     @discardableResult
-    public func postPlan(_ ticketID: UUID) async -> Bool {
-        let pending = unpostedPlanComments(for: ticketID)
+    public func updatePlanComment(_ id: UUID, text: String) -> Bool {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, let i = planComments.firstIndex(where: { $0.id == id }),
+              planComments[i].postedAt == nil, planComments[i].text != trimmed else { return false }
+        record(.planComment, ticket: ticket(planComments[i].ticketID), field: "Plan comment edited", old: planComments[i].text, new: trimmed)
+        planComments[i].text = trimmed
+        save()
+        return true
+    }
+
+    /// Posts the unposted plan comments (or just `commentID`) as one GitHub comment and marks them posted; on failure sets `notice` and returns false.
+    @discardableResult
+    public func postPlan(_ ticketID: UUID, only commentID: UUID? = nil) async -> Bool {
+        let pending = unpostedPlanComments(for: ticketID).filter { commentID == nil || $0.id == commentID }
         guard !pending.isEmpty, let gh = ticket(ticketID)?.github else { return false }
         guard let token = tokenProvider(), !token.isEmpty else {
             notice = "Add a GitHub token in Settings to post comments."
             return false
         }
         let body = pending.map(\.text).joined(separator: Self.planCommentSeparator)
-        let entryID = record(.planComment, ticket: ticket(ticketID), field: "Plan posted to GitHub", new: body, sync: .pending)
+        let entryID = record(
+            .planComment, ticket: ticket(ticketID), field: commentID == nil ? "Plan posted to GitHub" : "Plan comment posted to GitHub",
+            new: body, sync: .pending
+        )
         save()
         do {
             try await GitHubClient(token: token, transport: transport).postComment(repo: gh.repo, number: gh.number, body: body)
