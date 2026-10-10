@@ -41,6 +41,21 @@ struct SettingsView: View {
                 Stepper("Auto-sync every \(syncMinutes) min", value: $syncMinutes, in: 1...120)
             }
 
+            Section("Workspaces") {
+                if store.knownWorkspaces.isEmpty {
+                    Text("Connect GitHub and sync to list your personal and organization workspaces.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                ForEach(store.knownWorkspaces, id: \.self) { workspace in
+                    Toggle(workspace.title, isOn: Binding(
+                        get: { store.isWorkspaceVisible(workspace) },
+                        set: { store.setWorkspace(workspace, visible: $0) }
+                    ))
+                }
+                Text("Choose which workspaces appear in the switcher. Turned-off workspaces are hidden everywhere, including All.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+
             Section("Focus") {
                 Stepper(idleMinutes == 0 ? "Idle auto-stop: off" : "Stop timer after \(idleMinutes) min idle", value: $idleMinutes, in: 0...60)
             }

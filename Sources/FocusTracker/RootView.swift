@@ -24,6 +24,7 @@ enum SidebarItem: String, CaseIterable, Identifiable {
 private struct SidebarRow: View {
     let item: SidebarItem
     let selected: Bool
+    var badge: Int?
     let action: () -> Void
     @State private var hovering = false
 
@@ -31,26 +32,32 @@ private struct SidebarRow: View {
         Button(action: action) {
             HStack(spacing: 10) {
                 Image(systemName: item.symbol)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(selected ? Color.white : Theme.accent)
-                    .frame(width: 26, height: 26)
-                    .background(
-                        selected ? AnyShapeStyle(Theme.accentGradient) : AnyShapeStyle(Theme.accent.opacity(0.12)),
-                        in: RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    )
-                Text(item.rawValue).font(.body.weight(selected ? .semibold : .medium))
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(selected ? Theme.accent : Color.secondary)
+                    .frame(width: 20)
+                Text(item.rawValue).font(.system(size: 13.5, weight: selected ? .semibold : .medium))
                 Spacer(minLength: 0)
+                if let badge, badge > 0 {
+                    Text(badge.formatted())
+                        .font(.caption2.weight(.semibold).monospacedDigit())
+                        .foregroundStyle(selected ? Theme.accent : Color.secondary)
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 2)
+                        .background(selected ? Theme.accent.opacity(0.15) : Color.primary.opacity(0.07), in: Capsule())
+                }
             }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 6)
+            .foregroundStyle(selected ? Theme.accent : Color.primary)
+            .padding(.horizontal, 10)
+            .frame(height: 34)
             .background(
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .fill(selected ? Theme.accent.opacity(0.12) : Color.primary.opacity(hovering ? 0.05 : 0))
+                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                    .fill(selected ? Theme.accent.opacity(0.13) : Color.primary.opacity(hovering ? 0.06 : 0))
             )
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
+        .animation(.easeOut(duration: 0.12), value: hovering)
         .accessibilityAddTraits(selected ? .isSelected : [])
     }
 }
@@ -66,29 +73,18 @@ struct RootView: View {
 
     var body: some View {
         NavigationSplitView {
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 8) {
-                    IconTile(symbol: "scope", size: 28)
-                    Text("Focus Tracker").font(.headline)
-                }
-                .padding(.horizontal, 8)
-                .padding(.bottom, 12)
-                WorkspaceSwitcher().padding(.bottom, 8)
-                ForEach(SidebarItem.allCases) { item in
-                    SidebarRow(item: item, selected: (selection ?? .today) == item) { selection = item }
-                }
-                Spacer()
+            HStack(spacing: 0) {
+                WorkspaceRail()
+                sidebarColumn
             }
-            .padding(12)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            .navigationSplitViewColumnWidth(min: 200, ideal: 220)
-            .safeAreaInset(edge: .bottom) { SyncStatusView().padding(12) }
+            .navigationSplitViewColumnWidth(min: 280, ideal: 290)
         } detail: {
             VStack(spacing: 0) {
                 NoticeBanner()
                 ActiveTimerBar()
                 content
             }
+            .background(Theme.pageBackground)
             .inspector(isPresented: inspectorShown) {
                 if let id = selectedTicketID {
                     TicketDetailView(ticketID: id) { planTicketID = id }
@@ -125,6 +121,36 @@ struct RootView: View {
         .onChange(of: store.activeWorkspace) {
             filter.repo = nil
             selectedTicketID = nil
+        }
+    }
+
+    private var sidebarColumn: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(spacing: 10) {
+                IconTile(symbol: "scope", size: 28)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("Focus Tracker").font(.system(size: 14, weight: .semibold))
+                    Text(store.activeWorkspace.title).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                }
+            }
+            .padding(.horizontal, 10)
+            .padding(.top, 8)
+            .padding(.bottom, 10)
+            ForEach(SidebarItem.allCases) { item in
+                SidebarRow(item: item, selected: (selection ?? .today) == item, badge: badge(for: item)) { selection = item }
+            }
+            Spacer()
+            SyncStatusView().padding(.bottom, 12)
+        }
+        .padding(.horizontal, 10)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    private func badge(for item: SidebarItem) -> Int? {
+        switch item {
+        case .tickets: store.workspaceTickets.filter { $0.status != .done }.count
+        case .pullRequests: store.workspacePullRequests.count
+        default: nil
         }
     }
 

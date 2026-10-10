@@ -114,7 +114,7 @@ struct TodayView: View {
 
     var body: some View {
         let range = todayRange
-        let active = store.tickets.filter { $0.status == .inProgress || $0.status == .inReview }
+        let active = store.workspaceTickets.filter { $0.status == .inProgress || $0.status == .inReview }
         let log = store.log(in: range)
 
         ScrollView {

@@ -13,6 +13,7 @@ public enum PrefKey {
     public static let workDays = "planWorkDays"
     public static let githubLogin = "githubLogin"
     public static let workspace = "selectedWorkspace"
+    public static let hiddenWorkspaces = "hiddenWorkspaces"
 }
 
 public enum SyncState: Equatable, Sendable {
@@ -47,6 +48,8 @@ public final class AppStore {
     public private(set) var pullRequests: [PullRequestItem] = []
     public private(set) var pullRequestsState: PullRequestsState = .idle
     public private(set) var githubLogin: String?
+    /// Workspaces switched off in Settings, as `Workspace.storageValue`.
+    public private(set) var hiddenWorkspaces: Set<String> = []
     public var selectedWorkspace: Workspace = .all {
         didSet { defaults.set(selectedWorkspace.storageValue, forKey: PrefKey.workspace) }
     }
@@ -85,6 +88,7 @@ public final class AppStore {
         self.tokenProvider = tokenProvider
         self.idleSeconds = idleSeconds
         githubLogin = defaults.string(forKey: PrefKey.githubLogin)
+        hiddenWorkspaces = Set(defaults.stringArray(forKey: PrefKey.hiddenWorkspaces) ?? [])
         selectedWorkspace = Workspace(storageValue: defaults.string(forKey: PrefKey.workspace))
         load()
         if activeEntry != nil || activeActivity != nil { startTicking() }
@@ -112,26 +116,42 @@ public final class AppStore {
         defaults.set(login, forKey: PrefKey.githubLogin)
     }
 
-    /// All, Personal, then one entry per organization seen in tickets or pull requests; only All until the login is known.
-    public var workspaceOptions: [Workspace] {
-        guard let login = githubLogin else { return [.all] }
+    /// Personal plus one entry per organization seen in tickets or pull requests; empty until the login is known.
+    public var knownWorkspaces: [Workspace] {
+        guard let login = githubLogin else { return [] }
         let repos = tickets.compactMap { $0.github?.repo } + pullRequests.map(\.repo)
         let orgs = Set(repos.compactMap { repo -> String? in
             if case .organization(let name) = Workspace.of(repo: repo, login: login) { return name }
             return nil
         })
         let sorted = orgs.sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
-        return [.all, .personal] + sorted.map(Workspace.organization)
+        return [.personal] + sorted.map(Workspace.organization)
     }
 
-    /// The selection, or All when it no longer exists (for example an organization with nothing left).
+    public func isWorkspaceVisible(_ workspace: Workspace) -> Bool {
+        !hiddenWorkspaces.contains(workspace.storageValue)
+    }
+
+    public func setWorkspace(_ workspace: Workspace, visible: Bool) {
+        if visible { hiddenWorkspaces.remove(workspace.storageValue) } else { hiddenWorkspaces.insert(workspace.storageValue) }
+        defaults.set(hiddenWorkspaces.sorted(), forKey: PrefKey.hiddenWorkspaces)
+    }
+
+    /// All, then the visible workspaces; only All until the login is known.
+    public var workspaceOptions: [Workspace] {
+        [.all] + knownWorkspaces.filter(isWorkspaceVisible)
+    }
+
+    /// The selection, or All when it is hidden or no longer exists.
     public var activeWorkspace: Workspace {
         workspaceOptions.contains(selectedWorkspace) ? selectedWorkspace : .all
     }
 
+    /// Hidden workspaces are excluded even from All.
     private func inActiveWorkspace(repo: String?) -> Bool {
         guard let login = githubLogin else { return true }
-        return activeWorkspace.contains(repo: repo, login: login)
+        let owner = repo.map { Workspace.of(repo: $0, login: login) } ?? .personal
+        return isWorkspaceVisible(owner) && activeWorkspace.contains(repo: repo, login: login)
     }
 
     public var workspaceTickets: [Ticket] {
@@ -140,6 +160,21 @@ public final class AppStore {
 
     public var workspacePullRequests: [PullRequestItem] {
         pullRequests.filter { inActiveWorkspace(repo: $0.repo) }
+    }
+
+    private var workspaceEntries: [TimeEntry] {
+        let ids = Set(workspaceTickets.map(\.id))
+        return entries.filter { ids.contains($0.ticketID) }
+    }
+
+    private var workspaceNotes: [TicketNote] {
+        let ids = Set(workspaceTickets.map(\.id))
+        return notes.filter { ids.contains($0.ticketID) }
+    }
+
+    /// Calls and meetings have no repo, so they follow Personal.
+    private var workspaceActivities: [Activity] {
+        inActiveWorkspace(repo: nil) ? activities : []
     }
 
     public func tickets(matching filter: TicketFilter) -> [Ticket] {
@@ -170,12 +205,12 @@ public final class AppStore {
     }
 
     public func trackedTime(in interval: DateInterval) -> TimeInterval {
-        entries.reduce(0) { $0 + $1.duration(in: interval, at: now) } + activityTime(in: interval)
+        workspaceEntries.reduce(0) { $0 + $1.duration(in: interval, at: now) } + activityTime(in: interval)
     }
 
     /// Time spent on calls, meetings and other non-ticket activities.
     public func activityTime(in interval: DateInterval) -> TimeInterval {
-        activities.reduce(0) { $0 + $1.duration(in: interval, at: now) }
+        workspaceActivities.reduce(0) { $0 + $1.duration(in: interval, at: now) }
     }
 
     public func trackedTime(for ticketID: UUID, in interval: DateInterval) -> TimeInterval {
@@ -183,7 +218,7 @@ public final class AppStore {
     }
 
     public func entries(in interval: DateInterval) -> [TimeEntry] {
-        entries
+        workspaceEntries
             .filter { $0.duration(in: interval, at: now) > 0 }
             .sorted { $0.start > $1.start }
     }
@@ -202,8 +237,8 @@ public final class AppStore {
     /// Time entries, notes and activities that fall in `interval`, newest first.
     public func log(in interval: DateInterval) -> [LogItem] {
         let items = entries(in: interval).map(LogItem.time)
-            + notes.filter { interval.contains($0.createdAt) }.map(LogItem.note)
-            + activities.filter { $0.duration(in: interval, at: now) > 0 }.map(LogItem.activity)
+            + workspaceNotes.filter { interval.contains($0.createdAt) }.map(LogItem.note)
+            + workspaceActivities.filter { $0.duration(in: interval, at: now) > 0 }.map(LogItem.activity)
         return items.sorted { $0.date > $1.date }
     }
 
@@ -218,9 +253,9 @@ public final class AppStore {
 
     /// Tickets with at least a minute tracked (or a note) in `interval`, bucketed by category.
     public func categoryStats(in interval: DateInterval) -> [CategoryStat] {
-        let worked = tickets.compactMap { ticket -> CategoryStat.Entry? in
+        let worked = workspaceTickets.compactMap { ticket -> CategoryStat.Entry? in
             let seconds = trackedTime(for: ticket.id, in: interval)
-            let hasNote = notes.contains { $0.ticketID == ticket.id && interval.contains($0.createdAt) }
+            let hasNote = workspaceNotes.contains { $0.ticketID == ticket.id && interval.contains($0.createdAt) }
             return seconds >= 60 || hasNote ? CategoryStat.Entry(ticket: ticket, seconds: seconds) : nil
         }.sorted { $0.seconds > $1.seconds }
 
@@ -261,7 +296,7 @@ public final class AppStore {
     }
 
     private func activityLines(in range: DateInterval) -> [String] {
-        activities.compactMap { a -> String? in
+        workspaceActivities.compactMap { a -> String? in
             let seconds = a.duration(in: range, at: now)
             guard seconds >= 60 else { return nil }
             return "- \(a.kind.title): \(a.title) (\(Format.short(seconds)))"
@@ -280,7 +315,7 @@ public final class AppStore {
             }
         }
 
-        for ticket in tickets {
+        for ticket in workspaceTickets {
             let seconds = trackedTime(for: ticket.id, in: range)
             let ticketNotes = notes
                 .filter { $0.ticketID == ticket.id && range.contains($0.createdAt) }
@@ -290,7 +325,7 @@ public final class AppStore {
             let category = ticket.field(named: "Status")?.value ?? ticket.status.title
             append(category, SummaryItem(text: ticket.github?.url ?? ticket.title, isLink: ticket.github != nil, notes: ticketNotes))
         }
-        for activity in activities where activity.duration(in: range, at: now) >= 60 {
+        for activity in workspaceActivities where activity.duration(in: range, at: now) >= 60 {
             let title = activity.kind == .other ? activity.kind.title : "Meetings"
             append(title, SummaryItem(text: activity.title))
         }
@@ -362,9 +397,9 @@ public final class AppStore {
         let todayRange = dayRange(for: today, calendar: calendar)
         // Planned tickets come first with any time/notes already logged today.
         let isPlanned: (Ticket) -> Bool = { $0.status == .inProgress || $0.status == .inReview }
-        let planned = tickets.filter(isPlanned)
+        let planned = workspaceTickets.filter(isPlanned)
             .map { ticketLine($0, in: todayRange) ?? "- \($0.displayKey) \($0.title)" }
-        let otherWork = tickets.filter { !isPlanned($0) }.compactMap { ticketLine($0, in: todayRange) }
+        let otherWork = workspaceTickets.filter { !isPlanned($0) }.compactMap { ticketLine($0, in: todayRange) }
         let todayLines = planned + otherWork + activityLines(in: todayRange)
 
         return """
@@ -867,7 +902,7 @@ public final class AppStore {
             .mapValues { Int(($0.reduce(0) { $0 + $1.duration(at: now) } / 60).rounded()) }
         // A future day is ranked as of its own start so "due now" means due by then.
         let ranked = DayPlanner.rank(
-            tickets: tickets, carriedOver: carried, now: max(now, start), settings: planSettings, calendar: calendar,
+            tickets: workspaceTickets, carriedOver: carried, now: max(now, start), settings: planSettings, calendar: calendar,
             trackedMinutes: tracked, plannedAheadMinutes: plannedAheadMinutes(before: start, tracked: tracked, calendar: calendar)
         )
         let planned = Set(plan(for: day, calendar: calendar)?.ticketIDs ?? [])
@@ -919,6 +954,9 @@ public final class AppStore {
         let candidates = planCandidates(for: day, calendar: calendar)
         guard !candidates.isEmpty else { return nil }
         let deferredTicketIDs = plan(for: day, calendar: calendar)?.deferredTicketIDs
+        let hiddenPlanned = (plan(for: day, calendar: calendar)?.ticketIDs ?? []).filter { id in
+            !workspaceTickets.contains { $0.id == id }
+        }
         let deferredSet = Set(deferredTicketIDs ?? [])
         let pickable = candidates.filter {
             !deferredSet.contains($0.id) && $0.ticket.isQuickCapture != true
@@ -927,8 +965,8 @@ public final class AppStore {
         let capacity = capacity(for: day, calendarBusy: calendarBusy, calendar: calendar)
         var plan = DayPlan(
             day: calendar.startOfDay(for: day),
-            ticketIDs: planSettings.isWorkingDay(day, calendar: calendar)
-                ? DayPlanner.autoPick(pickable, capacityMinutes: capacity.capacityMinutes) : [],
+            ticketIDs: (planSettings.isWorkingDay(day, calendar: calendar)
+                ? DayPlanner.autoPick(pickable, capacityMinutes: capacity.capacityMinutes) : []) + hiddenPlanned,
             createdAt: Date()
         )
         plan.deferredTicketIDs = deferredTicketIDs
@@ -968,7 +1006,7 @@ public final class AppStore {
     public func dayLoad(for day: Date, calendarBusy: [DateInterval], calendar: Calendar = .current) -> DayLoad {
         DayPlanner.load(
             plannedIDs: Set(plan(for: day, calendar: calendar)?.ticketIDs ?? []),
-            tickets: tickets, entries: entries, activities: activities,
+            tickets: workspaceTickets, entries: workspaceEntries, activities: workspaceActivities,
             capacityMinutes: capacity(for: day, calendarBusy: calendarBusy, calendar: calendar).capacityMinutes,
             day: dayRange(for: day, calendar: calendar), now: now, settings: planSettings
         )

@@ -10,7 +10,7 @@ struct ReportsView: View {
     var body: some View {
         let totals = store.dailyTotals(days: 7)
         let weekRange = DateInterval(start: totals.first?.day ?? store.now, end: store.now.addingTimeInterval(1))
-        let perTicket = store.tickets
+        let perTicket = store.workspaceTickets
             .map { ($0, store.trackedTime(for: $0.id, in: weekRange)) }
             .filter { $0.1 >= 60 }
             .sorted { $0.1 > $1.1 }
