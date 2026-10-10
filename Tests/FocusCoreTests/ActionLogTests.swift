@@ -66,4 +66,35 @@ final class ActionLogTests: XCTestCase {
         XCTAssertEqual(removed, 1)
         XCTAssertEqual(store.actionLog.count, 2)
     }
+
+    func testUpdateLogsEachChangedField() {
+        let (store, _) = makeStore()
+        let t = store.addTicket(title: "A")
+
+        store.update(t.id) { $0.labels = ["bug"]; $0.status = .done }
+
+        let edits = store.actionLog.filter { $0.kind == .ticketEdit && $0.ticketID == t.id }
+        XCTAssertEqual(Set(edits.compactMap(\.field)), ["Labels", "Status"])
+        let status = edits.first { $0.field == "Status" }!
+        XCTAssertEqual(status.oldValue, "Todo")
+        XCTAssertEqual(status.newValue, "Done")
+    }
+
+    func testNoOpUpdateLogsNothing() {
+        let (store, _) = makeStore()
+        let t = store.addTicket(title: "A")
+        let before = store.actionLog.count
+        store.update(t.id) { $0.title = "A" }
+        XCTAssertEqual(store.actionLog.count, before)
+    }
+
+    func testCreateAndDeleteAreLoggedAndEntriesSurviveDelete() {
+        let (store, _) = makeStore()
+        let t = store.addTicket(title: "Gone soon")
+        store.deleteTicket(t.id)
+
+        let kinds = store.actionLog.filter { $0.ticketID == t.id }.map(\.kind)
+        XCTAssertEqual(kinds, [.ticketCreate, .ticketDelete])
+        XCTAssertEqual(store.actionLog.last?.ticketTitle, "Gone soon")
+    }
 }

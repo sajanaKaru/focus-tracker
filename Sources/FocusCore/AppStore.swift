@@ -437,14 +437,19 @@ public final class AppStore {
     public func addTicket(title: String, priority: Priority = .none) -> Ticket {
         let ticket = Ticket(title: title, priority: priority)
         tickets.append(ticket)
+        record(.ticketCreate, ticket: ticket, new: title)
         save()
         return ticket
     }
 
     public func update(_ id: UUID, _ change: (inout Ticket) -> Void) {
         guard let i = tickets.firstIndex(where: { $0.id == id }) else { return }
+        let before = tickets[i]
         change(&tickets[i])
         tickets[i].updatedAt = Date()
+        for c in before.changes(to: tickets[i]) {
+            record(.ticketEdit, ticket: tickets[i], field: c.field, old: c.old, new: c.new, oldList: c.oldList, newList: c.newList)
+        }
         save()
     }
 
@@ -505,6 +510,7 @@ public final class AppStore {
 
     public func deleteTicket(_ id: UUID) {
         if isTracking(id) { stop() }
+        if let ticket = ticket(id) { record(.ticketDelete, ticket: ticket, old: ticket.title) }
         tickets.removeAll { $0.id == id }
         entries.removeAll { $0.ticketID == id }
         notes.removeAll { $0.ticketID == id }
@@ -1018,6 +1024,7 @@ public final class AppStore {
         guard !trimmed.isEmpty else { return nil }
         let ticket = Ticket(title: trimmed, labels: [kind.title], isQuickCapture: true)
         tickets.append(ticket)
+        record(.ticketCreate, ticket: ticket, new: trimmed)
         start(ticket.id)
         return self.ticket(ticket.id)
     }
