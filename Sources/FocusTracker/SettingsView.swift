@@ -68,6 +68,7 @@ struct SettingsView: View {
         let value = token.trimmingCharacters(in: .whitespaces)
         do {
             let login = try await GitHubClient(token: value).currentUser()
+            store.setGitHubLogin(login)
             try Keychain.set(value, account: Keychain.githubAccount)
             token = ""
             hasToken = true

@@ -73,6 +73,7 @@ struct RootView: View {
                 }
                 .padding(.horizontal, 8)
                 .padding(.bottom, 12)
+                WorkspaceSwitcher().padding(.bottom, 8)
                 ForEach(SidebarItem.allCases) { item in
                     SidebarRow(item: item, selected: (selection ?? .today) == item) { selection = item }
                 }
@@ -121,6 +122,10 @@ struct RootView: View {
             NewTicketSheet { selectedTicketID = $0 }
         }
         .onChange(of: selection) { planTicketID = nil }
+        .onChange(of: store.activeWorkspace) {
+            filter.repo = nil
+            selectedTicketID = nil
+        }
     }
 
     private var inspectorShown: Binding<Bool> {

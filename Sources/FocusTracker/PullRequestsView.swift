@@ -3,11 +3,26 @@ import SwiftUI
 
 struct PullRequestsView: View {
     @Environment(AppStore.self) private var store
+    @AppStorage("pullRequestRepo") private var selectedRepo = ""
 
     private var loading: Bool { store.pullRequestsState == .loading }
 
+    private var repoNames: [String] {
+        Array(Set(store.workspacePullRequests.map(\.repo))).sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
+    }
+
+    /// A saved repo that no longer has open PRs falls back to showing everything.
+    private var activeRepo: String? {
+        repoNames.contains(selectedRepo) ? selectedRepo : nil
+    }
+
+    private var sections: [PullRequestSection] {
+        guard let repo = activeRepo else { return store.pullRequestSections }
+        return PullRequestSection.make(from: store.workspacePullRequests.filter { $0.repo == repo })
+    }
+
     var body: some View {
-        let sections = store.pullRequestSections
+        let sections = self.sections
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
                 HStack(alignment: .top) {
@@ -25,6 +40,8 @@ struct PullRequestsView: View {
                     .disabled(loading)
                     .help("Reload your open pull requests")
                 }
+
+                if repoNames.count > 1 { repoMenu }
 
                 if case .failed(let message) = store.pullRequestsState {
                     EmptyHint(text: message, symbol: "exclamationmark.triangle")
@@ -56,6 +73,23 @@ struct PullRequestsView: View {
         }
         .background(Theme.pageBackground)
         .task { await store.refreshPullRequestsIfStale() }
+    }
+
+    private var repoMenu: some View {
+        Menu {
+            Picker("Repository", selection: $selectedRepo) {
+                Text("All repositories").tag("")
+                Divider()
+                ForEach(repoNames, id: \.self) { Text($0).tag($0) }
+            }
+            .pickerStyle(.inline)
+            .labelsHidden()
+        } label: {
+            FilterLabel(title: activeRepo ?? "All repositories", symbol: "shippingbox", active: activeRepo != nil)
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
     }
 
     private var subtitle: String {

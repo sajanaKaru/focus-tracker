@@ -12,7 +12,7 @@ struct FilterBar: View {
             sprintMenu
             Spacer()
             if filter.isActive {
-                Text("\(store.tickets(matching: filter).count) of \(store.tickets.count)")
+                Text("\(store.tickets(matching: filter).count) of \(store.workspaceTickets.count)")
                     .font(.caption.monospacedDigit())
                     .foregroundStyle(.secondary)
                 Button("Clear") { filter = TicketFilter() }
@@ -99,7 +99,7 @@ struct FilterBar: View {
     }
 }
 
-private struct FilterLabel: View {
+struct FilterLabel: View {
     let title: String
     let symbol: String
     let active: Bool

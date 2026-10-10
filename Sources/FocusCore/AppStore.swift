@@ -11,6 +11,8 @@ public enum PrefKey {
     public static let focusPercent = "planFocusPercent"
     public static let defaultEstimateMinutes = "planDefaultEstimateMinutes"
     public static let workDays = "planWorkDays"
+    public static let githubLogin = "githubLogin"
+    public static let workspace = "selectedWorkspace"
 }
 
 public enum SyncState: Equatable, Sendable {
@@ -44,6 +46,10 @@ public final class AppStore {
     public private(set) var dayPlans: [DayPlan] = []
     public private(set) var pullRequests: [PullRequestItem] = []
     public private(set) var pullRequestsState: PullRequestsState = .idle
+    public private(set) var githubLogin: String?
+    public var selectedWorkspace: Workspace = .all {
+        didSet { defaults.set(selectedWorkspace.storageValue, forKey: PrefKey.workspace) }
+    }
     /// Updated every second while a timer runs; views read it to stay live.
     public private(set) var now = Date()
     public private(set) var syncState: SyncState = .idle
@@ -78,6 +84,8 @@ public final class AppStore {
         self.transport = transport
         self.tokenProvider = tokenProvider
         self.idleSeconds = idleSeconds
+        githubLogin = defaults.string(forKey: PrefKey.githubLogin)
+        selectedWorkspace = Workspace(storageValue: defaults.string(forKey: PrefKey.workspace))
         load()
         if activeEntry != nil || activeActivity != nil { startTicking() }
     }
@@ -99,23 +107,57 @@ public final class AppStore {
         tickets.contains { $0.sprints.contains { $0.isCurrent(at: now) } }
     }
 
+    public func setGitHubLogin(_ login: String) {
+        githubLogin = login
+        defaults.set(login, forKey: PrefKey.githubLogin)
+    }
+
+    /// All, Personal, then one entry per organization seen in tickets or pull requests; only All until the login is known.
+    public var workspaceOptions: [Workspace] {
+        guard let login = githubLogin else { return [.all] }
+        let repos = tickets.compactMap { $0.github?.repo } + pullRequests.map(\.repo)
+        let orgs = Set(repos.compactMap { repo -> String? in
+            if case .organization(let name) = Workspace.of(repo: repo, login: login) { return name }
+            return nil
+        })
+        let sorted = orgs.sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
+        return [.all, .personal] + sorted.map(Workspace.organization)
+    }
+
+    /// The selection, or All when it no longer exists (for example an organization with nothing left).
+    public var activeWorkspace: Workspace {
+        workspaceOptions.contains(selectedWorkspace) ? selectedWorkspace : .all
+    }
+
+    private func inActiveWorkspace(repo: String?) -> Bool {
+        guard let login = githubLogin else { return true }
+        return activeWorkspace.contains(repo: repo, login: login)
+    }
+
+    public var workspaceTickets: [Ticket] {
+        tickets.filter { inActiveWorkspace(repo: $0.github?.repo) }
+    }
+
+    public var workspacePullRequests: [PullRequestItem] {
+        pullRequests.filter { inActiveWorkspace(repo: $0.repo) }
+    }
+
     public func tickets(matching filter: TicketFilter) -> [Ticket] {
-        guard filter.isActive else { return tickets }
-        return tickets.filter { filter.matches($0, now: now) }
+        workspaceTickets.filter { filter.matches($0, now: now) }
     }
 
     public var repoNames: [String] {
-        Set(tickets.compactMap { $0.github?.repo }).sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
+        Set(workspaceTickets.compactMap { $0.github?.repo }).sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
     }
 
     public var milestoneTitles: [String] {
-        Set(tickets.compactMap { $0.milestone?.title }).sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
+        Set(workspaceTickets.compactMap { $0.milestone?.title }).sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
     }
 
     /// Sprint names, newest iteration first.
     public var sprintNames: [String] {
         var starts: [String: Date] = [:]
-        for field in tickets.flatMap(\.sprints) {
+        for field in workspaceTickets.flatMap(\.sprints) {
             starts[field.value] = max(starts[field.value] ?? .distantPast, field.start ?? .distantPast)
         }
         return starts.sorted { $0.value > $1.value }.map(\.key)
@@ -659,7 +701,7 @@ public final class AppStore {
 
     // MARK: - My pull requests
 
-    public var pullRequestSections: [PullRequestSection] { PullRequestSection.make(from: pullRequests) }
+    public var pullRequestSections: [PullRequestSection] { PullRequestSection.make(from: workspacePullRequests) }
 
     /// Loads my open pull requests; a failure keeps the previous list and never touches the ticket sync state.
     public func refreshPullRequests() async {
@@ -673,6 +715,7 @@ public final class AppStore {
         do {
             let client = GitHubClient(token: token, transport: transport)
             let login = try await client.currentUser()
+            setGitHubLogin(login)
             let result = try await client.fetchOpenPullRequests(authoredBy: login)
             let repos = configuredRepos
             pullRequests = repos.isEmpty ? result.items : result.items.filter { repos.contains($0.repo.lowercased()) }
