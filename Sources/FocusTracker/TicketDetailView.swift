@@ -6,6 +6,7 @@ struct TicketDetailView: View {
     let ticketID: UUID
     var onPlan: () -> Void = {}
     @State private var editing: LogEdit?
+    @State private var confirmingDelete = false
 
     var body: some View {
         if let ticket = store.ticket(ticketID) {
@@ -61,10 +62,19 @@ struct TicketDetailView: View {
                     }
                 }
 
+                if !ticket.specialWork.isEmpty {
+                    Section("Work type") {
+                        LabeledContent("Special work") {
+                            FlowLayout {
+                                ForEach(ticket.specialWork) { Chip(text: $0.title, color: Theme.accentEnd, symbol: $0.symbol) }
+                            }
+                        }
+                    }
+                }
+
                 if ticket.milestone != nil || !ticket.allFields.isEmpty {
                     GitHubFieldsSection(ticket: ticket)
                 }
-
                 Section("Time log") {
                     let tracked = store.trackedTime(for: ticketID)
                     HStack {
@@ -94,8 +104,7 @@ struct TicketDetailView: View {
                                 Button { editing = .entry(entry) } label: { Image(systemName: "pencil") }
                                     .buttonStyle(.borderless)
                                     .help("Edit")
-                                Button { store.deleteEntry(entry.id) } label: { Image(systemName: "trash") }
-                                    .buttonStyle(.borderless)
+                                DeleteButton(title: "Delete this time entry?") { store.deleteEntry(entry.id) }
                             }
                             .font(.callout)
                         case .note(let note):
@@ -108,7 +117,11 @@ struct TicketDetailView: View {
 
                 if !isRemote {
                     Section {
-                        Button("Delete ticket", role: .destructive) { store.deleteTicket(ticketID) }
+                        Button("Delete ticket", role: .destructive) { confirmingDelete = true }
+                            .confirmDestructive(
+                                $confirmingDelete, title: "Delete this ticket?",
+                                message: "Its time entries and notes are deleted too. This can't be undone."
+                            ) { store.deleteTicket(ticketID) }
                     }
                 }
             }

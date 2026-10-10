@@ -57,9 +57,7 @@ struct NoteRow: View {
                 .foregroundStyle(.secondary)
             }
             if let onDelete {
-                Button(action: onDelete) { Image(systemName: "trash") }
-                    .buttonStyle(.borderless)
-                    .help("Delete note")
+                DeleteButton(title: "Delete this note?", help: "Delete note", action: onDelete)
             }
         }
         .font(.callout)

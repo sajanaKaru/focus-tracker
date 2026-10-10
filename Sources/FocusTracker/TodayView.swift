@@ -238,9 +238,7 @@ struct TodayView: View {
             Button { editing = .entry(entry) } label: { Image(systemName: "pencil") }
                 .buttonStyle(.borderless)
                 .help("Edit")
-            Button { store.deleteEntry(entry.id) } label: { Image(systemName: "trash") }
-                .buttonStyle(.borderless)
-                .help("Delete")
+            DeleteButton(title: "Delete this time entry?") { store.deleteEntry(entry.id) }
         }
         .font(.callout)
         .padding(.horizontal, 14)

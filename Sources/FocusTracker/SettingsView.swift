@@ -16,6 +16,7 @@ struct SettingsView: View {
     @State private var hasToken = Keychain.get(account: Keychain.githubAccount) != nil
     @State private var message: String?
     @State private var busy = false
+    @State private var confirmingRemoval = false
 
     var body: some View {
         Form {
@@ -25,11 +26,15 @@ struct SettingsView: View {
                     Button("Save & Sync") { Task { await saveToken() } }
                         .disabled(token.trimmingCharacters(in: .whitespaces).isEmpty || busy)
                     if hasToken {
-                        Button("Remove token", role: .destructive) {
-                            Keychain.delete(account: Keychain.githubAccount)
-                            hasToken = false
-                            message = "Token removed."
-                        }
+                        Button("Remove token", role: .destructive) { confirmingRemoval = true }
+                            .confirmDestructive(
+                                $confirmingRemoval, title: "Remove the GitHub token?",
+                                message: "Syncing stops until you add a token again.", confirmLabel: "Remove"
+                            ) {
+                                Keychain.delete(account: Keychain.githubAccount)
+                                hasToken = false
+                                message = "Token removed."
+                            }
                     }
                 }
                 if let message { Text(message).font(.caption).foregroundStyle(.secondary) }

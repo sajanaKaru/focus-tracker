@@ -7,6 +7,7 @@ enum SidebarItem: String, CaseIterable, Identifiable {
     case tickets = "Tickets"
     case board = "Board"
     case pullRequests = "Pull Requests"
+    case specialWork = "Data & Scripts"
     case reports = "Reports"
 
     var id: String { rawValue }
@@ -17,6 +18,7 @@ enum SidebarItem: String, CaseIterable, Identifiable {
         case .tickets: "list.bullet.rectangle"
         case .board: "rectangle.split.3x1"
         case .pullRequests: "arrow.triangle.pull"
+        case .specialWork: "externaldrive.badge.timemachine"
         case .reports: "chart.bar"
         }
     }
@@ -202,8 +204,9 @@ struct RootView: View {
 
     private func badge(for item: SidebarItem) -> Int? {
         switch item {
-        case .tickets: store.workspaceTickets.filter { $0.status != .done }.count
+        case .tickets: store.currentSprintTickets.count
         case .pullRequests: store.workspacePullRequests.count
+        case .specialWork: store.openSpecialWorkCount
         default: nil
         }
     }
@@ -230,6 +233,7 @@ struct RootView: View {
         case .board:
             filtered { BoardView(selectedTicketID: $selectedTicketID, filter: filter) }
         case .pullRequests: PullRequestsView()
+        case .specialWork: SpecialWorkView(selectedTicketID: $selectedTicketID)
         case .reports: ReportsView()
         }
     }

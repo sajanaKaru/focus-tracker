@@ -263,9 +263,7 @@ struct ActivityRow: View {
                     .buttonStyle(.borderless)
                     .help("Edit")
             }
-            Button { store.deleteActivity(activity.id) } label: { Image(systemName: "trash") }
-                .buttonStyle(.borderless)
-                .help("Delete")
+            DeleteButton(title: "Delete this \(activity.kind.title.lowercased())?") { store.deleteActivity(activity.id) }
         }
         .font(.callout)
         .padding(.horizontal, 14)

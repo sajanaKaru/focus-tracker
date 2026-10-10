@@ -169,6 +169,17 @@ public final class AppStore {
         return pullRequests.filter { includes($0.repo) }
     }
 
+    /// Open tickets in the current sprint, or all open tickets while no sprint is current; used for sidebar badges.
+    public var currentSprintTickets: [Ticket] {
+        let open = workspaceTickets.filter { $0.status != .done }
+        guard hasCurrentSprint else { return open }
+        return open.filter { $0.sprints.contains { $0.isCurrent(at: now) } }
+    }
+
+    public var openSpecialWorkCount: Int {
+        currentSprintTickets.filter { !$0.specialWork.isEmpty }.count
+    }
+
     private var workspaceEntries: [TimeEntry] {
         let ids = Set(workspaceTickets.map(\.id))
         return entries.filter { ids.contains($0.ticketID) }

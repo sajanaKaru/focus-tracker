@@ -4,17 +4,21 @@ import SwiftUI
 struct FilterBar: View {
     @Environment(AppStore.self) private var store
     @Binding var filter: TicketFilter
+    var showsRepo = true
+    var showsCount = true
 
     var body: some View {
         HStack(spacing: 8) {
-            repoMenu
+            if showsRepo { repoMenu }
             milestoneMenu
             sprintMenu
             Spacer()
             if filter.isActive {
-                Text("\(store.tickets(matching: filter).count) of \(store.workspaceTickets.count)")
-                    .font(.caption.monospacedDigit())
-                    .foregroundStyle(.secondary)
+                if showsCount {
+                    Text("\(store.tickets(matching: filter).count) of \(store.workspaceTickets.count)")
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                }
                 Button("Clear") { filter = TicketFilter() }
                     .buttonStyle(.borderless)
                     .controlSize(.small)

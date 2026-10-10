@@ -89,9 +89,7 @@ private struct PlanCommentRow: View {
                         .foregroundStyle(Theme.success)
                 }
                 Spacer()
-                Button(action: onDelete) { Image(systemName: "trash") }
-                    .buttonStyle(.borderless)
-                    .help("Delete comment")
+                DeleteButton(title: "Delete this comment?", help: "Delete comment", action: onDelete)
             }
             .font(.caption)
             .foregroundStyle(.secondary)
