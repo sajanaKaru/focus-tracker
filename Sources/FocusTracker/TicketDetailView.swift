@@ -5,6 +5,7 @@ struct TicketDetailView: View {
     @Environment(AppStore.self) private var store
     let ticketID: UUID
     var onPlan: () -> Void = {}
+    var onShowLog: () -> Void = {}
     @State private var editing: LogEdit?
     @State private var confirmingDelete = false
 
@@ -13,16 +14,12 @@ struct TicketDetailView: View {
             let isRemote = ticket.github != nil
             Form {
                 Section {
-                    if isRemote {
-                        Text(ticket.title).font(.title2.bold()).textSelection(.enabled)
-                    } else {
-                        TextField("Title", text: field(\.title))
-                            .font(.title3.weight(.semibold))
-                    }
+                    TitleEditor(ticket: ticket).id(ticketID)
                     FlowLayout {
                         StatusBadge(status: ticket.status)
                         MetaChips(ticket: ticket)
                         LabelChips(ticket: ticket, limit: 8)
+                        TicketSyncMarker(ticketID: ticketID)
                     }
                     if let gh = ticket.github, let url = URL(string: gh.url) {
                         Link(destination: url) { Label("\(gh.repo)#\(gh.number) on GitHub", systemImage: "arrow.up.right.square") }
@@ -34,19 +31,11 @@ struct TicketDetailView: View {
                 }
 
                 Section("Details") {
-                    Picker("Status", selection: Binding(get: { ticket.status }, set: { store.setStatus(ticketID, $0) })) {
-                        ForEach(TicketStatus.allCases) { Text($0.title).tag($0) }
-                    }
-                    Picker("Priority", selection: field(\.priority)) {
-                        ForEach(Priority.allCases) { Text($0.title).tag($0) }
-                    }
-                    Toggle("Due date", isOn: Binding(
-                        get: { ticket.dueDate != nil },
-                        set: { on in store.update(ticketID) { $0.dueDate = on ? Date() : nil } }
-                    ))
-                    if let due = ticket.dueDate {
-                        DatePicker("Due", selection: Binding(get: { due }, set: { d in store.update(ticketID) { $0.dueDate = d } }), displayedComponents: .date)
-                    }
+                    StatusEditor(ticket: ticket)
+                    PriorityEditor(ticket: ticket)
+                    MilestoneEditor(ticket: ticket)
+                    TargetDateEditor(ticket: ticket)
+                    LabelsEditor(ticket: ticket)
                     Stepper(
                         "Estimate: \(ticket.effectiveEstimateMinutes.map { Format.short(TimeInterval($0 * 60)) } ?? "none")",
                         value: Binding(
@@ -61,6 +50,8 @@ struct TicketDetailView: View {
                             .font(.caption).foregroundStyle(.secondary)
                     }
                 }
+
+                DescriptionSection(ticket: ticket)
 
                 if !ticket.specialWork.isEmpty {
                     Section("Work type") {
@@ -115,6 +106,8 @@ struct TicketDetailView: View {
                     }
                 }
 
+                TicketHistorySection(ticketID: ticketID, showAll: onShowLog)
+
                 if !isRemote {
                     Section {
                         Button("Delete ticket", role: .destructive) { confirmingDelete = true }
@@ -127,16 +120,12 @@ struct TicketDetailView: View {
             }
             .formStyle(.grouped)
             .sheet(item: $editing) { EditLogSheet(target: $0) }
-            .task(id: ticketID) { await store.refreshTicket(ticketID) }
+            .task(id: ticketID) {
+                await store.refreshTicket(ticketID)
+                await store.loadOptions()
+            }
         } else {
             ContentUnavailableView("Ticket not found", systemImage: "questionmark.circle")
         }
-    }
-
-    private func field<T>(_ keyPath: WritableKeyPath<Ticket, T>) -> Binding<T> {
-        Binding(
-            get: { store.ticket(ticketID)![keyPath: keyPath] },
-            set: { value in store.update(ticketID) { $0[keyPath: keyPath] = value } }
-        )
     }
 }

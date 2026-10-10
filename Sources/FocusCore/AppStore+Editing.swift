@@ -30,7 +30,7 @@ extension AppStore {
         guard let t = ticket(id), labels != t.labels else { return }
         let known = Dictionary(labelOptions(for: t).map { ($0.name, $0.color) }, uniquingKeysWith: { first, _ in first })
         let change = FieldChange(field: "Labels", old: listText(t.labels), new: listText(labels), oldList: t.labels, newList: labels)
-        edit(id, change, remote: .labels(labels)) { ticket in
+        edit(id, change, remote: .labels(labels), delay: .milliseconds(800)) { ticket in
             ticket.labels = labels
             var colors = ticket.labelColors ?? [:]
             for label in labels where colors[label] == nil {

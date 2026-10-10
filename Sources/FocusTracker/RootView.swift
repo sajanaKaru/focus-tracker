@@ -137,7 +137,14 @@ struct RootView: View {
             }
             .inspector(isPresented: inspectorShown) {
                 if let id = selectedTicketID {
-                    TicketDetailView(ticketID: id) { planTicketID = id }
+                    TicketDetailView(
+                        ticketID: id,
+                        onPlan: { planTicketID = id },
+                        onShowLog: {
+                            logFilter = ActionLogFilter(ticketID: id)
+                            selection = .actionLog
+                        }
+                    )
                         .inspectorColumnWidth(min: 300, ideal: 360, max: 520)
                 }
             }
