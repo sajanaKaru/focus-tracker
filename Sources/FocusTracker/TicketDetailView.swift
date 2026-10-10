@@ -53,6 +53,8 @@ struct TicketDetailView: View {
 
                 DescriptionSection(ticket: ticket)
 
+                TicketCommentsSection(ticket: ticket, onPlan: onPlan)
+
                 if !ticket.specialWork.isEmpty {
                     Section("Work type") {
                         LabeledContent("Special work") {
@@ -120,6 +122,7 @@ struct TicketDetailView: View {
             }
             .formStyle(.grouped)
             .sheet(item: $editing) { EditLogSheet(target: $0) }
+            .task(id: ticketID) { await store.loadComments(ticketID, minimumInterval: 0) }
             .task(id: ticketID) {
                 await store.refreshTicket(ticketID)
                 await store.loadOptions()

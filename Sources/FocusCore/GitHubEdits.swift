@@ -10,6 +10,45 @@ private struct OrgFieldDTO: Decodable {
     let options: [Option]?
 }
 
+private struct IssueCommentDTO: Decodable {
+    struct User: Decodable { let login: String }
+    let id: Int
+    let body: String?
+    let htmlUrl: String
+    let createdAt: Date
+    let updatedAt: Date
+    let user: User?
+}
+
+/// A comment on the GitHub issue, as shown read-only in the ticket detail.
+public struct IssueComment: Identifiable, Equatable, Sendable {
+    public var id: Int
+    public var author: String
+    public var body: String
+    public var url: String
+    public var createdAt: Date
+    public var updatedAt: Date
+
+    public init(id: Int, author: String, body: String, url: String, createdAt: Date, updatedAt: Date) {
+        self.id = id
+        self.author = author
+        self.body = body
+        self.url = url
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+    }
+}
+
+extension GitHubClient {
+    /// All comments on the issue, oldest first. A deleted author shows as "ghost", as on GitHub.
+    public func fetchComments(repo: String, number: Int) async throws -> [IssueComment] {
+        guard let url = URL(string: "https://\(Self.apiHost)/repos/\(repo)/issues/\(number)/comments?per_page=100") else { throw GitHubError.invalidResponse }
+        return try await getAll(url, as: IssueCommentDTO.self).map {
+            IssueComment(id: $0.id, author: $0.user?.login ?? "ghost", body: $0.body ?? "", url: $0.htmlUrl, createdAt: $0.createdAt, updatedAt: $0.updatedAt)
+        }
+    }
+}
+
 extension GitHubClient {
     private func getAll<T: Decodable>(_ url: URL, as type: T.Type, maxPages: Int = 20) async throws -> [T] {
         let decoder = JSONDecoder()

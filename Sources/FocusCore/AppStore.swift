@@ -47,6 +47,10 @@ public final class AppStore {
     public private(set) var dayPlans: [DayPlan] = []
     public private(set) var actionLog: [ActionLogEntry] = []
     public private(set) var dismissedFailureIDs: Set<UUID> = []
+    /// GitHub issue comments per ticket; fetched on demand and kept in memory only.
+    public private(set) var issueComments: [UUID: [IssueComment]] = [:]
+    public private(set) var commentsError: [UUID: String] = [:]
+    public private(set) var commentsLoading: Set<UUID> = []
     public private(set) var remoteOptions = RemoteOptions()
     public private(set) var pullRequests: [PullRequestItem] = []
     public private(set) var pullRequestsState: PullRequestsState = .idle
@@ -70,6 +74,7 @@ public final class AppStore {
     @ObservationIgnored private var tickTask: Task<Void, Never>?
     @ObservationIgnored private var autoSyncTask: Task<Void, Never>?
     @ObservationIgnored private var lastRefresh: [UUID: Date] = [:]
+    @ObservationIgnored private var lastCommentsLoad: [UUID: Date] = [:]
     @ObservationIgnored private var pendingPushes: [String: Task<Void, Never>] = [:]
     @ObservationIgnored private var pendingEntryIDs: [String: UUID] = [:]
 
@@ -857,6 +862,21 @@ public final class AppStore {
         } catch {
             notice = "Couldn't read GitHub Projects fields (\(error.localizedDescription)). Sprint, estimate and RCA need a token with read:project access."
             return issues
+        }
+    }
+
+    /// Loads the issue's GitHub comments; on failure the previously loaded comments stay and `commentsError` is set.
+    public func loadComments(_ id: UUID, minimumInterval: TimeInterval = 30) async {
+        guard let gh = ticket(id)?.github, let token = tokenProvider(), !token.isEmpty, !commentsLoading.contains(id) else { return }
+        if let last = lastCommentsLoad[id], Date().timeIntervalSince(last) < minimumInterval { return }
+        lastCommentsLoad[id] = Date()
+        commentsLoading.insert(id)
+        defer { commentsLoading.remove(id) }
+        do {
+            issueComments[id] = try await GitHubClient(token: token, transport: transport).fetchComments(repo: gh.repo, number: gh.number)
+            commentsError[id] = nil
+        } catch {
+            commentsError[id] = error.localizedDescription
         }
     }
 
