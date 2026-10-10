@@ -61,4 +61,93 @@ final class GitHubEditsTests: XCTestCase {
             XCTAssertTrue(error.localizedDescription.contains("Nope"))
         }
     }
+
+    private func method(_ t: RecordingTransport, _ i: Int) -> String { t.requests[i].httpMethod ?? "" }
+
+    func testApplyLabelsMilestoneTitleAndState() async throws {
+        let transport = RecordingTransport { _ in (200, "{}") }
+        let client = GitHubClient(token: "t", transport: transport)
+
+        try await client.apply(.labels(["bug", "ui"]), repo: "me/a", number: 1)
+        try await client.apply(.milestone(number: 3), repo: "me/a", number: 1)
+        try await client.apply(.milestone(number: nil), repo: "me/a", number: 1)
+        try await client.apply(.title("New"), repo: "me/a", number: 1)
+        try await client.apply(.state(open: false), repo: "me/a", number: 1)
+        try await client.apply(.state(open: true), repo: "me/a", number: 1)
+
+        XCTAssertEqual(method(transport, 0), "PUT")
+        XCTAssertEqual(transport.requests[0].url?.path, "/repos/me/a/issues/1/labels")
+        XCTAssertEqual(transport.json(0)?["labels"] as? [String], ["bug", "ui"])
+        XCTAssertEqual(method(transport, 1), "PATCH")
+        XCTAssertEqual(transport.requests[1].url?.path, "/repos/me/a/issues/1")
+        XCTAssertEqual(transport.json(1)?["milestone"] as? Int, 3)
+        XCTAssertTrue(transport.json(2)?["milestone"] is NSNull)
+        XCTAssertEqual(transport.json(3)?["title"] as? String, "New")
+        XCTAssertEqual(transport.json(4)?["state"] as? String, "closed")
+        XCTAssertEqual(transport.json(4)?["state_reason"] as? String, "completed")
+        XCTAssertEqual(transport.json(5)?["state"] as? String, "open")
+    }
+
+    func testSetIssueFieldKeepsOtherValuesAndUsesOrgFieldID() async throws {
+        let current = """
+        [{"issue_field_id":1,"issue_field_name":"Priority","data_type":"single_select","value":"High","single_select_option":{"id":10,"name":"High","color":"red"}},
+         {"issue_field_id":5,"issue_field_name":"Points","data_type":"number","value":3}]
+        """
+        let transport = RecordingTransport { request in
+            let path = request.url?.path ?? ""
+            if request.httpMethod == "GET", path.hasSuffix("/issue-field-values") { return (200, current) }
+            if request.httpMethod == "GET", path == "/orgs/me/issue-fields" { return (200, #"[{"id":8,"name":"Target date","data_type":"date","options":null}]"#) }
+            return (200, "[]")
+        }
+        let client = GitHubClient(token: "t", transport: transport)
+
+        try await client.setIssueField(repo: "me/a", number: 1, name: "Target date", value: .string("2026-12-01"))
+
+        let put = transport.requests.last!
+        XCTAssertEqual(put.httpMethod, "PUT")
+        XCTAssertEqual(put.url?.path, "/repos/me/a/issues/1/issue-field-values")
+        XCTAssertEqual(put.value(forHTTPHeaderField: "X-GitHub-Api-Version"), "2026-03-10")
+        let body = try JSONSerialization.jsonObject(with: put.httpBody!) as! [String: Any]
+        let values = body["issue_field_values"] as! [[String: Any]]
+        XCTAssertEqual(values.count, 3)
+        XCTAssertEqual(values.first { ($0["field_id"] as? Int) == 1 }?["value"] as? String, "High")
+        XCTAssertEqual(values.first { ($0["field_id"] as? Int) == 5 }?["value"] as? Int, 3)
+        XCTAssertEqual(values.first { ($0["field_id"] as? Int) == 8 }?["value"] as? String, "2026-12-01")
+    }
+
+    func testClearIssueFieldDeletesOnlyThatValue() async throws {
+        let current = #"[{"issue_field_id":4,"issue_field_name":"Target date","data_type":"date","value":"2026-10-20"}]"#
+        let transport = RecordingTransport { request in
+            request.httpMethod == "GET" ? (200, current) : (204, "")
+        }
+        let client = GitHubClient(token: "t", transport: transport)
+
+        try await client.apply(.issueField(name: "Target date", value: nil), repo: "me/a", number: 1)
+
+        let last = transport.requests.last!
+        XCTAssertEqual(last.httpMethod, "DELETE")
+        XCTAssertEqual(last.url?.path, "/repos/me/a/issues/1/issue-field-values/4")
+    }
+
+    func testMissingOrgFieldThrows() async {
+        let client = GitHubClient(token: "t", transport: RecordingTransport { _ in (200, "[]") })
+        do {
+            try await client.setIssueField(repo: "me/a", number: 1, name: "Target date", value: .string("2026-12-01"))
+            XCTFail("expected error")
+        } catch {
+            XCTAssertTrue(error.localizedDescription.contains("Target date"))
+        }
+    }
+
+    func testApplyProjectFieldForwardsToProjectMutation() async throws {
+        let lookup = self.lookup
+        let transport = RecordingTransport { request in
+            request.httpBody.flatMap { String(data: $0, encoding: .utf8) }?.contains("updateProjectV2ItemFieldValue") == true
+                ? (200, #"{"data":{"updateProjectV2ItemFieldValue":{"projectV2Item":{"id":"x"}}}}"#)
+                : (200, lookup)
+        }
+        let client = GitHubClient(token: "t", transport: transport)
+        try await client.apply(.projectField(project: "Board", field: "Status", value: .option("Done")), repo: "me/a", number: 1)
+        XCTAssertEqual(transport.requests.count, 2)
+    }
 }

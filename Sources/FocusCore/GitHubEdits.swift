@@ -61,4 +61,90 @@ extension GitHubClient {
         }
         return result
     }
+
+    private func issueURL(_ repo: String, _ number: Int, _ suffix: String = "") throws -> URL {
+        guard let url = URL(string: "https://\(Self.apiHost)/repos/\(repo)/issues/\(number)\(suffix)") else { throw GitHubError.invalidResponse }
+        return url
+    }
+
+    private func send(method: String, _ url: URL, body: [String: Any]?, apiVersion: String = "2022-11-28") async throws -> Data {
+        var request = request(for: url, apiVersion: apiVersion)
+        request.httpMethod = method
+        if let body {
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        }
+        return try await send(request).0
+    }
+
+    /// Replaces all labels on the issue.
+    public func setLabels(repo: String, number: Int, labels: [String]) async throws {
+        _ = try await send(method: "PUT", issueURL(repo, number, "/labels"), body: ["labels": labels])
+    }
+
+    public func patchIssue(repo: String, number: Int, _ body: [String: Any]) async throws {
+        _ = try await send(method: "PATCH", issueURL(repo, number), body: body)
+    }
+
+    /// Sets (or with nil clears) one organization issue field. GitHub's PUT replaces every value, so the others are re-sent.
+    public func setIssueField(repo: String, number: Int, name: String, value: IssueFieldValue?) async throws {
+        let valuesURL = try issueURL(repo, number, "/issue-field-values")
+        let current = try await send(method: "GET", valuesURL, body: nil, apiVersion: Self.issueFieldsAPIVersion)
+        let rows = (try JSONSerialization.jsonObject(with: current) as? [[String: Any]]) ?? []
+
+        var entries: [[String: Any]] = []
+        var targetID: Int?
+        for row in rows {
+            guard let id = row["issue_field_id"] as? Int else { continue }
+            if (row["issue_field_name"] as? String)?.caseInsensitiveCompare(name) == .orderedSame {
+                targetID = id
+                continue
+            }
+            let kept: Any?
+            switch row["data_type"] as? String {
+            case "single_select": kept = (row["single_select_option"] as? [String: Any])?["name"]
+            case "multi_select": kept = (row["multi_select_options"] as? [[String: Any]])?.compactMap { $0["name"] as? String }
+            default: kept = row["value"]
+            }
+            if let kept { entries.append(["field_id": id, "value": kept]) }
+        }
+
+        guard let value else {
+            if let targetID {
+                _ = try await send(method: "DELETE", valuesURL.appendingPathComponent(String(targetID)), body: nil, apiVersion: Self.issueFieldsAPIVersion)
+            }
+            return
+        }
+
+        if targetID == nil {
+            guard let owner = repo.split(separator: "/").first else { throw GitHubError.invalidResponse }
+            targetID = try await fetchOrgIssueFields(org: String(owner)).first { $0.name.caseInsensitiveCompare(name) == .orderedSame }?.id
+        }
+        guard let targetID else { throw GitHubError.graphQL("The organization has no \"\(name)\" issue field.") }
+
+        switch value {
+        case .string(let text): entries.append(["field_id": targetID, "value": text])
+        case .number(let number): entries.append(["field_id": targetID, "value": number])
+        }
+        _ = try await send(method: "PUT", valuesURL, body: ["issue_field_values": entries], apiVersion: Self.issueFieldsAPIVersion)
+    }
+
+    public func apply(_ edit: RemoteEdit, repo: String, number: Int) async throws {
+        switch edit {
+        case .labels(let labels):
+            try await setLabels(repo: repo, number: number, labels: labels)
+        case .milestone(let milestone):
+            try await patchIssue(repo: repo, number: number, ["milestone": milestone.map { $0 as Any } ?? NSNull()])
+        case .title(let title):
+            try await patchIssue(repo: repo, number: number, ["title": title])
+        case .body(let body):
+            try await patchIssue(repo: repo, number: number, ["body": body])
+        case .state(let open):
+            try await patchIssue(repo: repo, number: number, open ? ["state": "open"] : ["state": "closed", "state_reason": "completed"])
+        case .issueField(let name, let value):
+            try await setIssueField(repo: repo, number: number, name: name, value: value)
+        case .projectField(let project, let field, let value):
+            try await updateProjectField(repo: repo, number: number, project: project, field: field, value: value)
+        }
+    }
 }
