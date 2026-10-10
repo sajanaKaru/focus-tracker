@@ -1,31 +1,36 @@
 import XCTest
 @testable import FocusCore
 
-@MainActor
 final class TodayFilterTests: XCTestCase {
-    private func makeStore() -> AppStore {
-        let url = FileManager.default.temporaryDirectory.appendingPathComponent("ft-\(UUID().uuidString).json")
-        return AppStore(storeURL: url, defaults: UserDefaults(suiteName: "ft-\(UUID().uuidString)")!, tokenProvider: { nil })
+    private let day: TimeInterval = 86_400
+
+    private func sprint(_ name: String, startingDaysAgo: Double, length: Int = 14) -> CustomField {
+        let start = Date().addingTimeInterval(-startingDaysAgo * day)
+        return CustomField(name: "Sprint", value: name, kind: .iteration, project: "P", start: start, end: start.addingTimeInterval(Double(length) * day))
     }
 
-    func testHasOpenMilestoneIgnoresClosedAndMissingMilestones() {
-        let store = makeStore()
-        XCTAssertFalse(store.hasOpenMilestone)
-
-        store.insertTicketForTest(Ticket(title: "No milestone"))
-        store.insertTicketForTest(Ticket(title: "Closed", milestone: Milestone(title: "v1", isOpen: false)))
-        XCTAssertFalse(store.hasOpenMilestone)
-
-        store.insertTicketForTest(Ticket(title: "Open", milestone: Milestone(title: "v2")))
-        XCTAssertTrue(store.hasOpenMilestone)
+    private func inProgress(_ title: String, repo: String = "me/a", milestone: String? = nil, sprint: CustomField? = nil) -> Ticket {
+        Ticket(
+            title: title, status: .inProgress, milestone: milestone.map { Milestone(title: $0) },
+            fields: sprint.map { [$0] }, github: GitHubRef(repo: repo, number: 1, url: "u")
+        )
     }
 
-    func testOngoingFilterKeepsOnlyOpenMilestoneTickets() {
-        let open = Ticket(title: "Open", status: .inProgress, milestone: Milestone(title: "v2"))
-        let closed = Ticket(title: "Closed", status: .inProgress, milestone: Milestone(title: "v1", isOpen: false))
-        let none = Ticket(title: "None", status: .inProgress)
-        let filter = TicketFilter(milestone: .ongoing)
+    func testCurrentSprintFilterKeepsOnlyTicketsInTheRunningSprint() {
+        let current = inProgress("Now", sprint: sprint("Sprints 11", startingDaysAgo: 3))
+        let old = inProgress("Old", sprint: sprint("Sprints 9", startingDaysAgo: 40))
+        let none = inProgress("None")
+        let filter = TicketFilter(sprint: .current)
 
-        XCTAssertEqual([open, closed, none].filter { filter.matches($0) }.map(\.title), ["Open"])
+        XCTAssertEqual([current, old, none].filter { filter.matches($0) }.map(\.title), ["Now"])
+    }
+
+    func testRepoSprintAndMilestoneCombine() {
+        let match = inProgress("Match", repo: "acme/api", milestone: "v2", sprint: sprint("Sprints 11", startingDaysAgo: 3))
+        let otherRepo = inProgress("Other repo", repo: "acme/web", milestone: "v2", sprint: sprint("Sprints 11", startingDaysAgo: 3))
+        let otherMilestone = inProgress("Other milestone", repo: "acme/api", milestone: "v1", sprint: sprint("Sprints 11", startingDaysAgo: 3))
+        let filter = TicketFilter(repo: "acme/api", milestone: .named("v2"), sprint: .current)
+
+        XCTAssertEqual([match, otherRepo, otherMilestone].filter { filter.matches($0) }.map(\.title), ["Match"])
     }
 }
