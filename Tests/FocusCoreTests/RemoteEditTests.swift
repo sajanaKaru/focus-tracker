@@ -19,6 +19,23 @@ final class RemoteEditTests: XCTestCase {
         XCTAssertEqual(TicketStatus(optionName: "Something else"), .todo)
     }
 
+    func testInDevCountsAsInProgressInAnyDecoration() {
+        for name in ["In Dev", "🏃 In Dev", "In Dev 🏃", "in dev", "Dev", "Development"] {
+            XCTAssertEqual(TicketStatus(optionName: name), .inProgress, name)
+        }
+        XCTAssertEqual(TicketStatus(optionName: "🏃 In Progress"), .inProgress)
+        XCTAssertEqual(TicketStatus(optionName: "Dev Review"), .inReview)
+        XCTAssertEqual(TicketStatus(optionName: "Devices queue"), .todo, "only the word Dev counts")
+    }
+
+    func testSyncPutsInDevTicketsInProgress() {
+        let issue = RemoteIssue(
+            repo: "me/a", number: 1, title: "A", url: "u",
+            fields: [CustomField(name: "Status", value: "🏃 In Dev", kind: .select, project: "Board")]
+        )
+        XCTAssertEqual(AppStore.merge(existing: [], remote: [issue])[0].status, .inProgress)
+    }
+
     func testRemoteEditSlotsAndCodable() throws {
         let edits: [RemoteEdit] = [
             .labels(["a"]), .milestone(number: nil), .title("t"), .body("b"), .state(open: false),

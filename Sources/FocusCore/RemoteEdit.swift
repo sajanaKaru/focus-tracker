@@ -47,10 +47,11 @@ extension TicketStatus {
     public init(optionName: String) {
         let n = optionName.lowercased()
         func has(_ words: [String]) -> Bool { words.contains { n.contains($0) } }
+        let isDev = n.split { !$0.isLetter }.contains("dev")
         if has(["done", "complete", "closed", "shipped", "released", "merged"]) { self = .done }
         else if has(["review", "qa", "testing"]) { self = .inReview }
         else if has(["not started", "to do", "todo"]) { self = .todo }
-        else if has(["progress", "doing", "started", "develop"]) { self = .inProgress }
+        else if isDev || has(["progress", "doing", "started", "develop"]) { self = .inProgress }
         else if has(["backlog", "icebox", "triage"]) { self = .backlog }
         else { self = .todo }
     }
