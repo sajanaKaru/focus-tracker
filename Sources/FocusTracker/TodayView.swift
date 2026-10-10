@@ -115,11 +115,12 @@ struct TodayView: View {
 
     var body: some View {
         let range = todayRange
-        let inProgress = store.workspaceTickets.filter { $0.status == .inProgress || $0.status == .inReview }
+        let inProgress = store.workspaceTickets.filter { $0.status.isInFlight }
         let active = inProgress.filter { filter.matches($0, now: store.now) }
         // A running timer goes first; the sort is stable so the rest keep their order.
         let inDev = active.filter { $0.status == .inProgress }.sorted { store.isTracking($0.id) && !store.isTracking($1.id) }
         let inReview = active.filter { $0.status == .inReview }
+        let inTesting = active.filter { $0.status == .testing }
         let log = store.log(in: range)
 
         ScrollView {
@@ -177,7 +178,7 @@ struct TodayView: View {
                             if inProgress.isEmpty {
                                 EmptyHint(text: "Nothing in dev. Start a timer from Tickets.", symbol: "moon.zzz")
                             } else if active.isEmpty {
-                                EmptyHint(text: "\(inProgress.count) in dev or code review, but none match these filters.", symbol: "line.3.horizontal.decrease.circle")
+                                EmptyHint(text: "\(inProgress.count) in dev, code review or testing, but none match these filters.", symbol: "line.3.horizontal.decrease.circle")
                             } else {
                                 EmptyHint(text: "Nothing in dev right now.", symbol: "moon.zzz")
                             }
@@ -189,6 +190,13 @@ struct TodayView: View {
                         VStack(alignment: .leading, spacing: 10) {
                             SectionTitle(title: "Code review", count: inReview.count)
                             ticketCards(inReview)
+                        }
+                    }
+
+                    if !inTesting.isEmpty {
+                        VStack(alignment: .leading, spacing: 10) {
+                            SectionTitle(title: "Testing", count: inTesting.count)
+                            ticketCards(inTesting)
                         }
                     }
                 }

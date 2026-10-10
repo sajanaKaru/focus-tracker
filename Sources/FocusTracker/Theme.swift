@@ -9,6 +9,7 @@ extension TicketStatus {
         case .todo: Theme.info
         case .inProgress: Theme.warning
         case .inReview: Theme.accentEnd
+        case .testing: Theme.teal
         case .done: Theme.success
         }
     }

@@ -158,6 +158,12 @@ final class DayPlannerTests: XCTestCase {
         XCTAssertEqual(ranked.map(\.ticket.title), ["ok"])
     }
 
+    func testTestingTicketsAreEligibleAndCountAsInProgress() {
+        let ranked = rank([ticket("in testing", status: .testing)])
+        XCTAssertEqual(ranked.map(\.ticket.title), ["in testing"])
+        XCTAssertEqual(ranked[0].reason, .inProgress)
+    }
+
     func testEstimateFallsBackToDefaultAndIsMarked() {
         let ranked = rank([ticket("own", estimate: 30, updated: 1), ticket("none", updated: 2)])
         XCTAssertEqual(ranked[0].estimateMinutes, 30)

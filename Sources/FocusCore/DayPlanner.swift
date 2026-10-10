@@ -126,7 +126,7 @@ public enum DayPlanner {
             let due = dueDate(of: ticket)
             if let due, due < tomorrow { return .dueNow }
             if carriedOver.contains(ticket.id) { return .carriedOver }
-            if ticket.status == .inProgress || ticket.status == .inReview { return .inProgress }
+            if ticket.status.isInFlight { return .inProgress }
             if let due, due < soonLimit { return .dueSoon }
             if ticket.sprints.contains(where: { $0.isCurrent(at: now) && ($0.end ?? .distantFuture) < soonLimit }) {
                 return .sprintEnding
@@ -136,7 +136,7 @@ public enum DayPlanner {
         }
 
         return tickets
-            .filter { [.todo, .inProgress, .inReview].contains($0.status) && $0.github?.remoteClosed != true }
+            .filter { ($0.status == .todo || $0.status.isInFlight) && $0.github?.remoteClosed != true }
             .map { ticket -> PlanCandidate in
                 let tracked = trackedMinutes[ticket.id] ?? 0
                 let ahead = plannedAheadMinutes[ticket.id] ?? 0

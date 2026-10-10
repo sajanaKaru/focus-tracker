@@ -423,7 +423,7 @@ public final class AppStore {
         let yesterday = calendar.date(byAdding: .day, value: -1, to: today) ?? today
         let todayRange = dayRange(for: today, calendar: calendar)
         // Planned tickets come first with any time/notes already logged today.
-        let isPlanned: (Ticket) -> Bool = { $0.status == .inProgress || $0.status == .inReview }
+        let isPlanned: (Ticket) -> Bool = { $0.status.isInFlight }
         let planned = workspaceTickets.filter(isPlanned)
             .map { ticketLine($0, in: todayRange) ?? "- \($0.displayKey) \($0.title)" }
         let otherWork = workspaceTickets.filter { !isPlanned($0) }.compactMap { ticketLine($0, in: todayRange) }

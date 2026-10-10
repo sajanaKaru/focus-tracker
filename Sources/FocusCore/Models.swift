@@ -1,9 +1,12 @@
 import Foundation
 
 public enum TicketStatus: String, Codable, CaseIterable, Identifiable, Sendable {
-    case backlog, todo, inProgress, inReview, done
+    case backlog, todo, inProgress, inReview, testing, done
 
     public var id: String { rawValue }
+
+    /// Work that has been started and isn't finished: in dev, code review or testing.
+    public var isInFlight: Bool { self == .inProgress || self == .inReview || self == .testing }
 
     public var title: String {
         switch self {
@@ -11,6 +14,7 @@ public enum TicketStatus: String, Codable, CaseIterable, Identifiable, Sendable 
         case .todo: "Todo"
         case .inProgress: "In Progress"
         case .inReview: "In Review"
+        case .testing: "Testing"
         case .done: "Done"
         }
     }
@@ -21,6 +25,7 @@ public enum TicketStatus: String, Codable, CaseIterable, Identifiable, Sendable 
         case .todo: "circle"
         case .inProgress: "circle.lefthalf.filled"
         case .inReview: "eye.circle"
+        case .testing: "testtube.2"
         case .done: "checkmark.circle.fill"
         }
     }

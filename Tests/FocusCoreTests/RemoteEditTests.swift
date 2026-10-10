@@ -47,9 +47,18 @@ final class RemoteEditTests: XCTestCase {
         }
     }
 
-    func testReviewAndTestingStayInReview() {
-        for name in ["🤞 Code Review", "Code Review 🤞", "👀 Tech review", "🧪 Testing"] {
+    func testReviewStaysInReviewAndTestingIsItsOwnStage() {
+        for name in ["🤞 Code Review", "Code Review 🤞", "👀 Tech review", "Dev Review"] {
             XCTAssertEqual(TicketStatus(optionName: name), .inReview, name)
+        }
+        for name in ["🧪 Testing", "Testing", "In Testing", "QA", "QA Testing"] {
+            XCTAssertEqual(TicketStatus(optionName: name), .testing, name)
+        }
+    }
+
+    func testReadyForBetaIsDone() {
+        for name in ["Ready for Beta", "🚀 Ready for Beta"] {
+            XCTAssertEqual(TicketStatus(optionName: name), .done, name)
         }
     }
 
