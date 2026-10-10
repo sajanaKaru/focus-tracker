@@ -147,19 +147,26 @@ public final class AppStore {
         workspaceOptions.contains(selectedWorkspace) ? selectedWorkspace : .all
     }
 
+    /// Resolved once per query: the active workspace scans every ticket, so it must not run per item.
     /// Hidden workspaces are excluded even from All.
-    private func inActiveWorkspace(repo: String?) -> Bool {
-        guard let login = githubLogin else { return true }
-        let owner = repo.map { Workspace.of(repo: $0, login: login) } ?? .personal
-        return isWorkspaceVisible(owner) && activeWorkspace.contains(repo: repo, login: login)
+    private func workspaceFilter() -> (String?) -> Bool {
+        guard let login = githubLogin else { return { _ in true } }
+        let active = activeWorkspace
+        let hidden = hiddenWorkspaces
+        return { repo in
+            let owner = repo.map { Workspace.of(repo: $0, login: login) } ?? .personal
+            return !hidden.contains(owner.storageValue) && active.contains(repo: repo, login: login)
+        }
     }
 
     public var workspaceTickets: [Ticket] {
-        tickets.filter { inActiveWorkspace(repo: $0.github?.repo) }
+        let includes = workspaceFilter()
+        return tickets.filter { includes($0.github?.repo) }
     }
 
     public var workspacePullRequests: [PullRequestItem] {
-        pullRequests.filter { inActiveWorkspace(repo: $0.repo) }
+        let includes = workspaceFilter()
+        return pullRequests.filter { includes($0.repo) }
     }
 
     private var workspaceEntries: [TimeEntry] {
@@ -174,7 +181,7 @@ public final class AppStore {
 
     /// Calls and meetings have no repo, so they follow Personal.
     private var workspaceActivities: [Activity] {
-        inActiveWorkspace(repo: nil) ? activities : []
+        workspaceFilter()(nil) ? activities : []
     }
 
     public func tickets(matching filter: TicketFilter) -> [Ticket] {
@@ -253,9 +260,10 @@ public final class AppStore {
 
     /// Tickets with at least a minute tracked (or a note) in `interval`, bucketed by category.
     public func categoryStats(in interval: DateInterval) -> [CategoryStat] {
+        let scopedNotes = workspaceNotes
         let worked = workspaceTickets.compactMap { ticket -> CategoryStat.Entry? in
             let seconds = trackedTime(for: ticket.id, in: interval)
-            let hasNote = workspaceNotes.contains { $0.ticketID == ticket.id && interval.contains($0.createdAt) }
+            let hasNote = scopedNotes.contains { $0.ticketID == ticket.id && interval.contains($0.createdAt) }
             return seconds >= 60 || hasNote ? CategoryStat.Entry(ticket: ticket, seconds: seconds) : nil
         }.sorted { $0.seconds > $1.seconds }
 
@@ -954,9 +962,8 @@ public final class AppStore {
         let candidates = planCandidates(for: day, calendar: calendar)
         guard !candidates.isEmpty else { return nil }
         let deferredTicketIDs = plan(for: day, calendar: calendar)?.deferredTicketIDs
-        let hiddenPlanned = (plan(for: day, calendar: calendar)?.ticketIDs ?? []).filter { id in
-            !workspaceTickets.contains { $0.id == id }
-        }
+        let inWorkspace = Set(workspaceTickets.map(\.id))
+        let hiddenPlanned = (plan(for: day, calendar: calendar)?.ticketIDs ?? []).filter { !inWorkspace.contains($0) }
         let deferredSet = Set(deferredTicketIDs ?? [])
         let pickable = candidates.filter {
             !deferredSet.contains($0.id) && $0.ticket.isQuickCapture != true
