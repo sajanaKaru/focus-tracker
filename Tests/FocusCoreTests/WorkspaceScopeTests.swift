@@ -41,4 +41,23 @@ final class WorkspaceScopeTests: XCTestCase {
         XCTAssertEqual(store.trackedTime(in: range), 0, accuracy: 1)
         XCTAssertTrue(store.workspaceTickets.isEmpty)
     }
+
+    func testCallsAndMeetingsShowInEveryWorkspace() {
+        let store = makeStore()
+        let acme = store.addTicket(title: "Acme work", priority: .none)
+        store.update(acme.id) { $0.github = GitHubRef(repo: "acme/api", number: 1, url: "https://github.com/acme/api/issues/1") }
+        let end = Date()
+        store.addActivity(kind: .call, title: "Client call", start: end.addingTimeInterval(-1_800), end: end)
+        let range = DateInterval(start: end.addingTimeInterval(-3_600), end: end.addingTimeInterval(60))
+
+        for workspace in [Workspace.all, .personal, .organization("acme")] {
+            store.selectedWorkspace = workspace
+            XCTAssertEqual(store.activityTime(in: range), 1_800, accuracy: 1, "\(workspace.title)")
+            XCTAssertEqual(store.log(in: range).count, 1, "\(workspace.title)")
+        }
+
+        store.setWorkspace(.personal, visible: false)
+        store.selectedWorkspace = .all
+        XCTAssertEqual(store.activityTime(in: range), 1_800, accuracy: 1, "hiding Personal must not hide calls")
+    }
 }

@@ -200,10 +200,8 @@ public final class AppStore {
         return notes.filter { ids.contains($0.ticketID) }
     }
 
-    /// Calls and meetings have no repo, so they follow Personal.
-    private var workspaceActivities: [Activity] {
-        workspaceFilter()(nil) ? activities : []
-    }
+    /// Calls and meetings belong to no repo, so every workspace shows them.
+    private var workspaceActivities: [Activity] { activities }
 
     public func tickets(matching filter: TicketFilter) -> [Ticket] {
         workspaceTickets.filter { filter.matches($0, now: now) }
