@@ -771,6 +771,7 @@ public final class AppStore {
         } catch {
             syncState = .failed(error.localizedDescription)
         }
+        if case .succeeded = syncState { await loadOptions() }
         await refreshPullRequests()
     }
 
@@ -1172,6 +1173,8 @@ public final class AppStore {
             )
             if canPush, let key { pendingEntryIDs[key] = entryID }
         }
+        // Flag the field while the push is in flight so a sync can't overwrite it; cleared on success.
+        if canPush { setUnsynced(id, field: change.field, to: true) }
         save()
 
         guard canPush, let key, let remote, let gh = ticket.github, let token = tokenProvider() else { return }

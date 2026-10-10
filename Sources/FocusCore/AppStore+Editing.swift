@@ -131,4 +131,32 @@ extension AppStore {
     public func statusOptions(for ticket: Ticket) -> [FieldOption] {
         ticket.projectStatusField.flatMap { remoteOptions.projectStatus[$0.project] } ?? []
     }
+
+    /// Refreshes the cached pickers data for every linked repo; failed requests keep the previous cache.
+    public func loadOptions(force: Bool = false) async {
+        guard let token = tokenProvider(), !token.isEmpty, force || !optionsAreFresh else { return }
+        let client = GitHubClient(token: token, transport: transport)
+        var options = remoteOptions
+        var repos: [String: String] = [:]
+        for gh in tickets.compactMap(\.github) { repos[gh.repo.lowercased()] = gh.repo }
+
+        var owners = Set<String>()
+        for (key, repo) in repos {
+            if let labels = try? await client.fetchLabels(repo: repo) { options.labels[key] = labels }
+            if let milestones = try? await client.fetchMilestones(repo: repo) { options.milestones[key] = milestones }
+            if let owner = repo.split(separator: "/").first { owners.insert(String(owner)) }
+        }
+        for owner in owners {
+            if let defs = try? await client.fetchOrgIssueFields(org: owner) { options.issueFields[owner.lowercased()] = defs }
+        }
+
+        var seenProjects = Set<String>()
+        for ticket in tickets {
+            guard let gh = ticket.github, let field = ticket.projectStatusField, seenProjects.insert(field.project).inserted else { continue }
+            if let found = try? await client.fetchProjectOptions(repo: gh.repo, number: gh.number, field: "Status") {
+                for (project, statuses) in found { options.projectStatus[project] = statuses }
+            }
+        }
+        storeOptions(options)
+    }
 }

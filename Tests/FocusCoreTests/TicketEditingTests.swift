@@ -124,4 +124,59 @@ final class TicketEditingTests: XCTestCase {
         store.setTitle(id, "   ")
         XCTAssertEqual(store.tickets[0].title, "New title")
     }
+
+    func testLoadOptionsCachesAndPersists() async {
+        let (store, _, id) = makeStore()
+        await store.loadOptions(force: true)
+
+        let t = store.ticket(id)!
+        XCTAssertEqual(store.labelOptions(for: t).map(\.name), ["bug", "ui"])
+        XCTAssertEqual(store.milestoneOptions(for: t).map(\.title), ["v3"])
+        XCTAssertEqual(store.priorityOptions(for: t).map(\.name), ["P1 - High", "P3 - Low"])
+        XCTAssertEqual(store.statusOptions(for: t).map(\.name), ["Todo", "In Progress", "Done"])
+    }
+
+    func testLoadOptionsIsThrottledAndTolerantOfFailures() async {
+        let (store, transport, _) = makeStore()
+        await store.loadOptions(force: true)
+        let count = transport.requests.count
+        await store.loadOptions()
+        XCTAssertEqual(transport.requests.count, count)
+
+        let failing = RecordingTransport { _ in (500, "{}") }
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("ft-\(UUID().uuidString).json")
+        let other = AppStore(storeURL: url, defaults: UserDefaults(suiteName: "ft-\(UUID().uuidString)")!, transport: failing, tokenProvider: { "t" })
+        other.insertTicketForTest(Ticket(title: "A", github: GitHubRef(repo: "me/a", number: 1, url: "u")))
+        await other.loadOptions(force: true)
+        XCTAssertEqual(other.remoteOptions, RemoteOptions())
+    }
+
+    func testSetPriorityMapsToOrgOptionWhenCached() async {
+        let (store, _, id) = makeStore()
+        await store.loadOptions(force: true)
+
+        store.setPriority(id, .low)
+        await store.settlePushes()
+
+        XCTAssertEqual(store.tickets[0].field(named: "Priority")?.value, "P3 - Low")
+        XCTAssertEqual(store.tickets[0].priority, .low)
+    }
+
+    func testSetStatusUsesCachedOptionAndLocalTicketsStayLocal() async {
+        let (store, transport, id) = makeStore()
+        await store.loadOptions(force: true)
+        let before = transport.requests.count
+
+        store.setStatus(id, .inProgress)
+        await store.settlePushes()
+        XCTAssertEqual(store.tickets[0].projectStatusField?.value, "In Progress")
+        XCTAssertGreaterThan(transport.requests.count, before)
+
+        let local = store.addTicket(title: "Local")
+        let count = transport.requests.count
+        store.setStatus(local.id, .done)
+        await store.settlePushes()
+        XCTAssertEqual(store.ticket(local.id)?.status, .done)
+        XCTAssertEqual(transport.requests.count, count)
+    }
 }

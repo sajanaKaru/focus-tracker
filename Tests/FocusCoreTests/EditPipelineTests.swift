@@ -131,6 +131,16 @@ final class EditPipelineTests: XCTestCase {
         XCTAssertEqual(store.tickets[0].unsynced, ["RCA"])
     }
 
+    func testSyncDoesNotOverwriteAnEditStillInFlight() {
+        let (store, _, id) = makeStore { _ in (200, "{}") }
+        store.edit(id, FieldChange(field: "Title", old: "A", new: "B"), remote: .title("B"), delay: .seconds(5)) { $0.title = "B" }
+
+        let remote = RemoteIssue(repo: "me/a", number: 1, title: "A", url: "u")
+        let merged = AppStore.merge(existing: store.tickets, remote: [remote])[0]
+
+        XCTAssertEqual(merged.title, "B")
+    }
+
     func testSyncDerivesPriorityDueDateAndStatusFromFields() {
         let target = Calendar.current.date(from: DateComponents(year: 2026, month: 12, day: 1))!
         let issue = RemoteIssue(
