@@ -459,7 +459,7 @@ public final class AppStore {
         if status == .done && isTracking(id) { stop() }
     }
 
-    /// Saves a project field locally right away, then writes it to GitHub; a failed write is reverted by re-reading the issue.
+    /// Saves a project field locally right away, then writes it to GitHub; a failed write stays local and is retryable from the log.
     public func setProjectField(_ id: UUID, name: String, project: String, to value: ProjectFieldValue, delay: Duration = .zero) {
         let payload: ProjectFieldValue
         let kind: CustomField.Kind
@@ -480,7 +480,7 @@ public final class AppStore {
             kind = .select
         }
 
-        update(id) { ticket in
+        edit(id, FieldChange(field: name, old: oldText, new: text), remote: .projectField(project: project, field: name, value: payload), delay: delay) { ticket in
             var fields = ticket.fields ?? []
             if let i = fields.firstIndex(where: { $0.project == project && $0.name == name }) {
                 fields[i].value = text
@@ -488,39 +488,6 @@ public final class AppStore {
                 fields.append(CustomField(name: name, value: text, kind: kind, project: project))
             }
             ticket.fields = fields
-        }
-
-        let canPush = ticket(id)?.github != nil && !(tokenProvider() ?? "").isEmpty
-        let key = "\(id)|\(project)|\(name)"
-        // Debounced edits share one pending entry so typing doesn't flood the log.
-        if canPush, let existing = pendingEntryIDs[key], let i = actionLog.firstIndex(where: { $0.id == existing }), actionLog[i].sync == .pending {
-            actionLog[i].newValue = text
-            actionLog[i].timestamp = Date()
-        } else {
-            let entryID = record(.ticketEdit, ticket: ticket(id), field: name, old: oldText, new: text, sync: canPush ? .pending : .notApplicable)
-            if canPush { pendingEntryIDs[key] = entryID }
-        }
-        save()
-
-        guard canPush, let gh = ticket(id)?.github, let token = tokenProvider() else { return }
-        pendingPushes[key]?.cancel()
-        pendingPushes[key] = Task { [weak self] in
-            if delay > .zero { try? await Task.sleep(for: delay) }
-            guard !Task.isCancelled, let self else { return }
-            let entryID = pendingEntryIDs[key]
-            let client = GitHubClient(token: token, transport: transport)
-            do {
-                try await client.updateProjectField(repo: gh.repo, number: gh.number, project: project, field: name, value: payload)
-                if let entryID { setActionSync(entryID, .synced(Date()), detail: "Updated \(name) in project \(project)") }
-            } catch {
-                if let entryID { setActionSync(entryID, .failed(error.localizedDescription), detail: "Update of \(name) in project \(project) failed") }
-                notice = "Couldn't update \(name) on GitHub (\(error.localizedDescription)). Writing needs a token with project write access."
-                await refreshTicket(id, minimumInterval: 0)
-            }
-            if !Task.isCancelled {
-                pendingPushes[key] = nil
-                pendingEntryIDs[key] = nil
-            }
         }
     }
 
@@ -897,14 +864,44 @@ public final class AppStore {
     }
 
     nonisolated private static func copyContent(from issue: RemoteIssue, into ticket: inout Ticket) {
-        ticket.title = issue.title
-        ticket.body = issue.body
-        ticket.labels = issue.labels
-        ticket.labelColors = issue.labelColors
-        ticket.milestone = issue.milestone
-        if let fields = issue.fields { ticket.fields = fields }
+        let keep = Set(ticket.unsynced ?? [])
+        let local = ticket
+        if !keep.contains("Title") { ticket.title = issue.title }
+        if !keep.contains("Description") { ticket.body = issue.body }
+        if !keep.contains("Labels") {
+            ticket.labels = issue.labels
+            ticket.labelColors = issue.labelColors
+        }
+        if !keep.contains("Milestone") { ticket.milestone = issue.milestone }
+        if let fields = issue.fields { ticket.fields = preserving(fields, keeping: keep, from: local.fields) }
         ticket.issueType = issue.issueType
-        if let fields = issue.issueFields { ticket.issueFields = fields }
+        if let fields = issue.issueFields { ticket.issueFields = preserving(fields, keeping: keep, from: local.issueFields) }
+        deriveFromFields(&ticket, keep: keep)
+    }
+
+    /// Remote fields, except those named in `names`, which keep their local value.
+    nonisolated private static func preserving(_ remote: [CustomField], keeping names: Set<String>, from local: [CustomField]?) -> [CustomField] {
+        guard !names.isEmpty, let local else { return remote }
+        var result = remote.map { field in
+            names.contains(field.name) ? (local.first { $0.name == field.name && $0.project == field.project } ?? field) : field
+        }
+        for field in local where names.contains(field.name) && !result.contains(where: { $0.name == field.name && $0.project == field.project }) {
+            result.append(field)
+        }
+        return result
+    }
+
+    /// Org Priority, org Target date and project Status are the source of truth when present.
+    nonisolated private static func deriveFromFields(_ ticket: inout Ticket, keep: Set<String>) {
+        if !keep.contains("Priority"), let field = ticket.field(named: "Priority"), field.kind == .select {
+            ticket.priority = Priority(optionName: field.value)
+        }
+        if !keep.contains("Target date"), let field = ticket.field(named: "Target date"), field.kind == .date, let date = field.start {
+            ticket.dueDate = date
+        }
+        if !keep.contains("Status"), let field = ticket.projectStatusField {
+            ticket.status = TicketStatus(optionName: field.value)
+        }
     }
 
     /// Upserts remote issues; local fields (status, priority, estimate) are preserved.
@@ -922,7 +919,7 @@ public final class AppStore {
                 result[i].github = GitHubRef(repo: issue.repo, number: issue.number, url: issue.url, isPullRequest: issue.isPullRequest)
                 result[i].updatedAt = now
             } else {
-                result.append(Ticket(
+                var created = Ticket(
                     title: issue.title,
                     body: issue.body,
                     status: .todo,
@@ -935,7 +932,9 @@ public final class AppStore {
                     createdAt: now,
                     updatedAt: now,
                     github: GitHubRef(repo: issue.repo, number: issue.number, url: issue.url, isPullRequest: issue.isPullRequest)
-                ))
+                )
+                deriveFromFields(&created, keep: [])
+                result.append(created)
             }
         }
 
@@ -1133,6 +1132,109 @@ public final class AppStore {
     }
 
     func insertTicketForTest(_ ticket: Ticket) { tickets.append(ticket) }
+
+    /// Applies `apply` locally, logs it, then pushes `remote` to GitHub when the ticket is linked and a token is set.
+    func edit(_ id: UUID, _ change: FieldChange, remote: RemoteEdit?, delay: Duration = .zero, apply: (inout Ticket) -> Void) {
+        guard let i = tickets.firstIndex(where: { $0.id == id }) else { return }
+        apply(&tickets[i])
+        tickets[i].updatedAt = Date()
+        let ticket = tickets[i]
+        let canPush = remote != nil && ticket.github != nil && !(tokenProvider() ?? "").isEmpty
+        let key = remote.map { "\(id)|\($0.slot)" }
+        if remote != nil { supersedeFailed(ticketID: id, field: change.field) }
+
+        // Debounced edits of the same slot share one pending entry so typing doesn't flood the log.
+        if canPush, let key, let existing = pendingEntryIDs[key], let n = actionLog.firstIndex(where: { $0.id == existing }), actionLog[n].sync == .pending {
+            actionLog[n].newValue = change.new
+            actionLog[n].newList = change.newList
+            actionLog[n].remote = remote
+            actionLog[n].timestamp = Date()
+        } else {
+            let entryID = record(
+                .ticketEdit, ticket: ticket, field: change.field, old: change.old, new: change.new,
+                oldList: change.oldList, newList: change.newList, sync: canPush ? .pending : .notApplicable, remote: remote
+            )
+            if canPush, let key { pendingEntryIDs[key] = entryID }
+        }
+        save()
+
+        guard canPush, let key, let remote, let gh = ticket.github, let token = tokenProvider() else { return }
+        pendingPushes[key]?.cancel()
+        pendingPushes[key] = Task { [weak self] in
+            if delay > .zero { try? await Task.sleep(for: delay) }
+            guard !Task.isCancelled, let self, let entryID = pendingEntryIDs[key] else { return }
+            await push(entryID, ticketID: id, field: change.field, edit: remote, repo: gh.repo, number: gh.number, token: token)
+            if !Task.isCancelled {
+                pendingPushes[key] = nil
+                pendingEntryIDs[key] = nil
+            }
+        }
+    }
+
+    private func push(_ entryID: UUID, ticketID: UUID, field: String, edit: RemoteEdit, repo: String, number: Int, token: String) async {
+        let client = GitHubClient(token: token, transport: transport)
+        do {
+            try await client.apply(edit, repo: repo, number: number)
+            setActionSync(entryID, .synced(Date()), detail: Self.describe(edit, repo: repo, number: number))
+            setUnsynced(ticketID, field: field, to: false)
+        } catch {
+            if Task.isCancelled { return }
+            setActionSync(entryID, .failed(error.localizedDescription), detail: "\(Self.describe(edit, repo: repo, number: number)) failed")
+            setUnsynced(ticketID, field: field, to: true)
+            notice = "Couldn't update \(field) on GitHub (\(error.localizedDescription))."
+        }
+    }
+
+    private func setUnsynced(_ id: UUID, field: String, to flagged: Bool) {
+        guard let i = tickets.firstIndex(where: { $0.id == id }) else { return }
+        var names = tickets[i].unsynced ?? []
+        names.removeAll { $0 == field }
+        if flagged { names.append(field) }
+        tickets[i].unsynced = names.isEmpty ? nil : names
+        save()
+    }
+
+    private func supersedeFailed(ticketID: UUID, field: String) {
+        for n in actionLog.indices where actionLog[n].ticketID == ticketID && actionLog[n].field == field {
+            if case .failed = actionLog[n].sync {
+                actionLog[n].sync = .notApplicable
+                actionLog[n].githubDetail = "Superseded by a later edit"
+            }
+        }
+    }
+
+    private static func describe(_ edit: RemoteEdit, repo: String, number: Int) -> String {
+        let target = "\(repo)#\(number)"
+        switch edit {
+        case .labels: return "Set labels on \(target)"
+        case .milestone: return "Set milestone on \(target)"
+        case .title: return "Set title on \(target)"
+        case .body: return "Set description on \(target)"
+        case .state(let open): return "\(open ? "Reopened" : "Closed") \(target)"
+        case .issueField(let name, _): return "Set issue field \(name) on \(target)"
+        case .projectField(let project, let field, _): return "Set \(field) in project \(project) on \(target)"
+        }
+    }
+
+    /// Re-sends a failed entry's edit. Returns true when it now succeeded.
+    @discardableResult
+    public func retry(_ entryID: UUID) async -> Bool {
+        guard let n = actionLog.firstIndex(where: { $0.id == entryID }), case .failed = actionLog[n].sync,
+              let edit = actionLog[n].remote, let ticketID = actionLog[n].ticketID, let field = actionLog[n].field,
+              let gh = ticket(ticketID)?.github, let token = tokenProvider(), !token.isEmpty else { return false }
+        setActionSync(entryID, .pending)
+        await push(entryID, ticketID: ticketID, field: field, edit: edit, repo: gh.repo, number: gh.number, token: token)
+        return !failedActions.contains { $0.id == entryID }
+    }
+
+    /// Retries every failed entry, oldest first.
+    public func resyncFailed() async {
+        for entry in failedActions { await retry(entry.id) }
+    }
+
+    func settlePushes() async {
+        for task in Array(pendingPushes.values) { await task.value }
+    }
 
     // MARK: - Action log
 
