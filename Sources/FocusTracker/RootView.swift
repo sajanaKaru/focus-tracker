@@ -120,6 +120,7 @@ struct RootView: View {
             .navigationSplitViewColumnWidth(min: 280, ideal: 290)
         } detail: {
             VStack(spacing: 0) {
+                FailureBanner()
                 NoticeBanner()
                 ActiveTimerBar()
                 content

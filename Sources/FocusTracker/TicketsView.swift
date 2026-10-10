@@ -21,6 +21,7 @@ struct TicketRow: View {
                     Text(ticket.displayKey).font(.caption).foregroundStyle(.secondary)
                     MetaChips(ticket: ticket)
                     LabelChips(ticket: ticket, limit: 3)
+                    TicketSyncMarker(ticketID: ticket.id)
                 }
             }
             Spacer(minLength: 8)

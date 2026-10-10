@@ -136,6 +136,8 @@ struct TodayView: View {
                     }
                 }
 
+                SyncIssuesCard(selectedTicketID: $selectedTicketID)
+
                 HStack(spacing: 10) {
                     dayNavigator
                     Spacer()

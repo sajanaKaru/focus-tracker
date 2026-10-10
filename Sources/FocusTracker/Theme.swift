@@ -339,6 +339,34 @@ struct EmptyHint: View {
     }
 }
 
+extension ActionKind {
+    var symbol: String {
+        switch self {
+        case .ticketCreate: "plus.circle.fill"
+        case .ticketEdit: "pencil.circle.fill"
+        case .ticketDelete: "trash.circle.fill"
+        case .timer: "timer"
+        case .timeEntry: "clock.fill"
+        case .note: "note.text"
+        case .planComment: "text.bubble.fill"
+        case .dayPlan: "calendar"
+        case .activity: "phone.fill"
+        }
+    }
+
+    var tint: Color {
+        switch self {
+        case .ticketCreate: Theme.success
+        case .ticketEdit: Theme.accent
+        case .ticketDelete: Theme.danger
+        case .timer, .timeEntry: Theme.warning
+        case .note, .planComment: Theme.info
+        case .dayPlan: Theme.teal
+        case .activity: Theme.accentEnd
+        }
+    }
+}
+
 struct HoverRowStyle: ButtonStyle {
     @State private var hovering = false
 
