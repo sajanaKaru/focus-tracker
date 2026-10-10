@@ -45,6 +45,7 @@ public final class AppStore {
     public private(set) var planComments: [PlanComment] = []
     public private(set) var activities: [Activity] = []
     public private(set) var dayPlans: [DayPlan] = []
+    public private(set) var actionLog: [ActionLogEntry] = []
     public private(set) var pullRequests: [PullRequestItem] = []
     public private(set) var pullRequestsState: PullRequestsState = .idle
     public private(set) var githubLogin: String?
@@ -1072,6 +1073,41 @@ public final class AppStore {
         save()
     }
 
+    // MARK: - Action log
+
+    @discardableResult
+    func record(
+        _ kind: ActionKind, ticket: Ticket? = nil, field: String? = nil, old: String? = nil, new: String? = nil,
+        oldList: [String]? = nil, newList: [String]? = nil, sync: ActionSync = .notApplicable,
+        detail: String? = nil, at date: Date = Date()
+    ) -> UUID {
+        let entry = ActionLogEntry(
+            timestamp: date, kind: kind, ticketID: ticket?.id, ticketKey: ticket?.displayKey, ticketTitle: ticket?.title,
+            field: field, oldValue: old, newValue: new, oldList: oldList, newList: newList, sync: sync, githubDetail: detail
+        )
+        actionLog.append(entry)
+        return entry.id
+    }
+
+    public func setActionSync(_ id: UUID, _ sync: ActionSync, detail: String? = nil) {
+        guard let i = actionLog.firstIndex(where: { $0.id == id }) else { return }
+        actionLog[i].sync = sync
+        if let detail { actionLog[i].githubDetail = detail }
+        save()
+    }
+
+    public var failedActions: [ActionLogEntry] {
+        actionLog.filter { if case .failed = $0.sync { true } else { false } }
+    }
+
+    @discardableResult
+    public func deleteActionLog(olderThan cutoff: Date) -> Int {
+        let before = actionLog.count
+        actionLog.removeAll { $0.timestamp < cutoff }
+        save()
+        return before - actionLog.count
+    }
+
     // MARK: - Persistence
 
     private struct Snapshot: Codable {
@@ -1081,6 +1117,7 @@ public final class AppStore {
         var planComments: [PlanComment]?
         var activities: [Activity]?
         var dayPlans: [DayPlan]?
+        var actionLog: [ActionLogEntry]?
     }
 
     /// Older files stored one free-text `notes` string per ticket.
@@ -1104,6 +1141,7 @@ public final class AppStore {
             activities = snapshot.activities ?? []
             planComments = snapshot.planComments ?? []
             dayPlans = snapshot.dayPlans ?? []
+            actionLog = snapshot.actionLog ?? []
             if let saved = snapshot.notes {
                 notes = saved
             } else if let legacy = try? decoder.decode(LegacySnapshot.self, from: data) {
@@ -1123,7 +1161,7 @@ public final class AppStore {
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         do {
             try FileManager.default.createDirectory(at: storeURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-            let data = try encoder.encode(Snapshot(tickets: tickets, entries: entries, notes: notes, planComments: planComments, activities: activities, dayPlans: dayPlans))
+            let data = try encoder.encode(Snapshot(tickets: tickets, entries: entries, notes: notes, planComments: planComments, activities: activities, dayPlans: dayPlans, actionLog: actionLog))
             try data.write(to: storeURL, options: .atomic)
         } catch {
             notice = "Could not save data: \(error.localizedDescription)"
