@@ -371,7 +371,8 @@ final class GitHubEditsTests: XCTestCase {
         }
         let client = GitHubClient(token: "t", transport: transport)
 
-        XCTAssertEqual(try await client.fetchLabels(repo: "me/a"), [LabelOption(name: "bug", color: "d73a4a"), LabelOption(name: "ui", color: "0075ca")])
+        let labels = try await client.fetchLabels(repo: "me/a")
+        XCTAssertEqual(labels, [LabelOption(name: "bug", color: "d73a4a"), LabelOption(name: "ui", color: "0075ca")])
         let milestones = try await client.fetchMilestones(repo: "me/a")
         XCTAssertEqual(milestones.map(\.title), ["v3", "v2"])
         XCTAssertEqual(milestones.map(\.isOpen), [true, false])

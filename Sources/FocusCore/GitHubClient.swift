@@ -167,7 +167,7 @@ public struct GitHubClient: Sendable {
         return result
     }
 
-    private static let issueFieldsAPIVersion = "2026-03-10"
+    static let issueFieldsAPIVersion = "2026-03-10"
 
     /// Project (v2) field values such as Sprint, Estimate and RCA, keyed by issue node ID.
     /// Needs the `read:project` scope; issues outside any project map to an empty array.
@@ -219,14 +219,14 @@ public struct GitHubClient: Sendable {
     }
     """
 
-    private static let fieldLookupQuery = """
+    static let fieldLookupQuery = """
     query($owner: String!, $name: String!, $number: Int!) {
       repository(owner: $owner, name: $name) {
         issue(number: $number) {
           projectItems(first: 20) {
             nodes {
               id
-              project { id title fields(first: 50) { nodes { ... on ProjectV2FieldCommon { id name } } } }
+              project { id title fields(first: 50) { nodes { ... on ProjectV2FieldCommon { id name } ... on ProjectV2SingleSelectField { options { id name color } } } } }
             }
           }
         }
@@ -234,32 +234,34 @@ public struct GitHubClient: Sendable {
     }
     """
 
-    private static let setFieldMutation = """
+    static let setFieldMutation = """
     mutation($project: ID!, $item: ID!, $field: ID!, $value: ProjectV2FieldValue!) {
       updateProjectV2ItemFieldValue(input: {projectId: $project, itemId: $item, fieldId: $field, value: $value}) { projectV2Item { id } }
     }
     """
 
-    private static let clearFieldMutation = """
+    static let clearFieldMutation = """
     mutation($project: ID!, $item: ID!, $field: ID!) {
       clearProjectV2ItemFieldValue(input: {projectId: $project, itemId: $item, fieldId: $field}) { projectV2Item { id } }
     }
     """
 
-    /// Writes a text or number value to a Projects (v2) field on the issue. Needs a token with write access to projects.
-    public func updateProjectField(repo: String, number: Int, project: String, field: String, value: ProjectFieldValue) async throws {
+    func projectItems(repo: String, number: Int) async throws -> [FieldLookup.Item] {
         let parts = repo.split(separator: "/")
         guard parts.count == 2 else { throw GitHubError.invalidResponse }
-
-        let lookupData = try await graphQL(Self.fieldLookupQuery, variables: ["owner": String(parts[0]), "name": String(parts[1]), "number": number])
-        let lookup = try JSONDecoder().decode(FieldLookup.self, from: lookupData)
+        let data = try await graphQL(Self.fieldLookupQuery, variables: ["owner": String(parts[0]), "name": String(parts[1]), "number": number])
+        let lookup = try JSONDecoder().decode(FieldLookup.self, from: data)
         if let message = lookup.errors?.first?.message { throw GitHubError.graphQL(message) }
+        return (lookup.data?.repository?.issue?.projectItems.nodes ?? []).compactMap { $0 }
+    }
 
-        let items = (lookup.data?.repository?.issue?.projectItems.nodes ?? []).compactMap { $0 }
+    /// Writes a text, number or single-select value to a Projects (v2) field on the issue. Needs a token with write access to projects.
+    public func updateProjectField(repo: String, number: Int, project: String, field: String, value: ProjectFieldValue) async throws {
+        let items = try await projectItems(repo: repo, number: number)
         guard let item = items.first(where: { $0.project.title == project }) else {
             throw GitHubError.graphQL("This issue is not in the \"\(project)\" project.")
         }
-        guard let fieldID = (item.project.fields.nodes ?? []).compactMap({ $0 }).first(where: { $0.name == field })?.id else {
+        guard let fieldNode = (item.project.fields.nodes ?? []).compactMap({ $0 }).first(where: { $0.name == field }), let fieldID = fieldNode.id else {
             throw GitHubError.graphQL("The \"\(project)\" project has no \"\(field)\" field.")
         }
 
@@ -272,8 +274,11 @@ public struct GitHubClient: Sendable {
             result = try await graphQL(Self.setFieldMutation, variables: ids.merging(["value": ["text": text]]) { $1 })
         case .number(let number):
             result = try await graphQL(Self.setFieldMutation, variables: ids.merging(["value": ["number": number]]) { $1 })
-        case .option:
-            throw GitHubError.invalidResponse
+        case .option(let name):
+            guard let optionID = fieldNode.options?.first(where: { $0.name == name })?.id else {
+                throw GitHubError.graphQL("The \"\(field)\" field has no \"\(name)\" option.")
+            }
+            result = try await graphQL(Self.setFieldMutation, variables: ids.merging(["value": ["singleSelectOptionId": optionID]]) { $1 })
         }
         if let message = try JSONDecoder().decode(FieldLookup.self, from: result).errors?.first?.message {
             throw GitHubError.graphQL(message)
@@ -315,12 +320,12 @@ public struct GitHubClient: Sendable {
     }
     """
 
-    private func graphQL(_ query: String, variables: [String: Any]) async throws -> Data {
+    func graphQL(_ query: String, variables: [String: Any]) async throws -> Data {
         let body = try JSONSerialization.data(withJSONObject: ["query": query, "variables": variables])
         return try await send(post: URL(string: "https://\(Self.apiHost)/graphql")!, body: body)
     }
 
-    private func get(_ url: URL, apiVersion: String = "2022-11-28") async throws -> (Data, HTTPURLResponse) {
+    func get(_ url: URL, apiVersion: String = "2022-11-28") async throws -> (Data, HTTPURLResponse) {
         try await send(request(for: url, apiVersion: apiVersion))
     }
 
@@ -332,7 +337,7 @@ public struct GitHubClient: Sendable {
         return try await send(request).0
     }
 
-    private func request(for url: URL, apiVersion: String = "2022-11-28") -> URLRequest {
+    func request(for url: URL, apiVersion: String = "2022-11-28") -> URLRequest {
         var request = URLRequest(url: url)
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
@@ -341,7 +346,7 @@ public struct GitHubClient: Sendable {
         return request
     }
 
-    private func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+    func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
         let (data, response) = try await transport.send(request)
         switch response.statusCode {
         case 200..<300: return (data, response)
@@ -480,7 +485,7 @@ private struct GraphQLEnvelope: Decodable {
     let errors: [Failure]?
 }
 
-private struct FieldLookup: Decodable {
+struct FieldLookup: Decodable {
     struct Failure: Decodable { let message: String }
     struct Root: Decodable { let repository: Repository? }
     struct Repository: Decodable { let issue: Issue? }
@@ -497,8 +502,14 @@ private struct FieldLookup: Decodable {
     }
     struct Fields: Decodable { let nodes: [Field?]? }
     struct Field: Decodable {
+        struct Option: Decodable {
+            let id: String
+            let name: String
+            let color: String?
+        }
         let id: String?
         let name: String?
+        let options: [Option]?
     }
 
     let data: Root?
