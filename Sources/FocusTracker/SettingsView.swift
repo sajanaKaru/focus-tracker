@@ -3,6 +3,7 @@ import SwiftUI
 
 struct SettingsView: View {
     @Environment(AppStore.self) private var store
+    @Environment(LicenseStore.self) private var license
     @AppStorage(PrefKey.repos) private var repos = ""
     @AppStorage(PrefKey.includePRs) private var includePRs = false
     @AppStorage(PrefKey.syncMinutes) private var syncMinutes = 10
@@ -20,6 +21,13 @@ struct SettingsView: View {
 
     var body: some View {
         Form {
+            if let email = license.email {
+                Section("Account") {
+                    LabeledContent("Signed in as", value: email)
+                    Button("Sign out") { license.signOut() }
+                }
+            }
+
             Section("GitHub") {
                 SecureField("Personal access token", text: $token)
                 HStack {

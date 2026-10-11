@@ -6,32 +6,52 @@ import SwiftUI
 struct FocusTrackerApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
     @State private var store = AppStore()
+    @State private var license = FocusTrackerApp.makeLicenseStore()
 
     var body: some Scene {
         WindowGroup("Focus Tracker", id: "main") {
-            RootView()
-                .environment(store)
-                .tint(Theme.accent)
-                .frame(minWidth: 960, minHeight: 600)
-                .task { store.startAutoSync() }
+            LicenseGate {
+                RootView()
+                    .environment(store)
+                    .tint(Theme.accent)
+            }
+            .environment(license)
+            .tint(Theme.accent)
+            .frame(minWidth: 960, minHeight: 600)
         }
 
         MenuBarExtra {
-            MenuBarView().environment(store).tint(Theme.accent)
+            Group {
+                if license.isActive { MenuBarView().environment(store) } else { LockedMenuView() }
+            }
+            .tint(Theme.accent)
         } label: {
-            MenuBarLabel(delegate: delegate).environment(store)
+            MenuBarLabel(delegate: delegate).environment(store).environment(license)
         }
         .menuBarExtraStyle(.window)
 
         Settings {
-            SettingsView().environment(store).tint(Theme.accent)
+            LicenseGate { SettingsView().environment(store).tint(Theme.accent) }
+                .environment(license)
         }
+    }
+
+    private static func makeLicenseStore() -> LicenseStore {
+        let key = Bundle.main.object(forInfoDictionaryKey: "FirebaseAPIKey") as? String ?? ""
+        #if DEBUG
+        let bypass = true
+        #else
+        let bypass = false
+        #endif
+        return LicenseStore(client: LicenseClient(apiKey: key), bypass: bypass)
     }
 }
 
 /// Always alive while the app runs, so it hands the delegate a way to reopen the main window after it was closed.
+/// It also runs license monitoring and keeps GitHub auto-sync going only while the license is active.
 private struct MenuBarLabel: View {
     @Environment(AppStore.self) private var store
+    @Environment(LicenseStore.self) private var license
     @Environment(\.openWindow) private var openWindow
     let delegate: AppDelegate
 
@@ -41,6 +61,13 @@ private struct MenuBarLabel: View {
             if store.activeEntry != nil || store.activeActivity != nil { Text(store.menuBarTitle).monospacedDigit() }
         }
         .task { delegate.openMainWindow = { openWindow(id: "main") } }
+        .task { license.startMonitoring() }
+        .task(id: license.isActive) {
+            if license.isActive { store.startAutoSync() } else { store.stopAutoSync() }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            Task { await license.recheckIfStale() }
+        }
     }
 }
 

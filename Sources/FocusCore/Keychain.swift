@@ -3,6 +3,8 @@ import Security
 
 public enum Keychain {
     public static let githubAccount = "github-token"
+    public static let firebaseRefreshAccount = "firebase-refresh-token"
+    public static let firebaseEmailAccount = "firebase-email"
     private static let service = "com.focustracker.app"
 
     public enum KeychainError: LocalizedError {
@@ -42,4 +44,18 @@ public enum Keychain {
     public static func delete(account: String) {
         SecItemDelete(query(account) as CFDictionary)
     }
+}
+
+/// Lets tests swap the Keychain for memory.
+public protocol SecretStore: Sendable {
+    func get(account: String) -> String?
+    func set(_ value: String, account: String) throws
+    func delete(account: String)
+}
+
+public struct KeychainSecretStore: SecretStore {
+    public init() {}
+    public func get(account: String) -> String? { Keychain.get(account: account) }
+    public func set(_ value: String, account: String) throws { try Keychain.set(value, account: account) }
+    public func delete(account: String) { Keychain.delete(account: account) }
 }

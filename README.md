@@ -6,7 +6,7 @@ Personal macOS app (SwiftUI): GitHub assigned tickets, time tracking, board, rep
 
 ```sh
 swift test                    # unit tests
-./scripts/build-app.sh        # creates build/FocusTracker.app
+./scripts/build-app.sh        # creates build/FocusTracker.app (needs FIREBASE_API_KEY in the environment or in a .env file)
 open build/FocusTracker.app
 ```
 

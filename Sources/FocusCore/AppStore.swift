@@ -768,6 +768,11 @@ public final class AppStore {
         }
     }
 
+    public func stopAutoSync() {
+        autoSyncTask?.cancel()
+        autoSyncTask = nil
+    }
+
     public func syncGitHub() async {
         guard syncState != .syncing else { return }
         guard let token = tokenProvider(), !token.isEmpty else {
