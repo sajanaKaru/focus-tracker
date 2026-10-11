@@ -20,8 +20,8 @@ final class RoleTests: XCTestCase {
     }
 
     func testLandingAndCaptureDefaults() {
-        XCTAssertEqual(UserRole.qa.profile.landing, .qaQueue)
-        XCTAssertEqual(UserRole.pm.profile.landing, .board)
+        XCTAssertEqual(UserRole.qa.profile.landing, .today)
+        XCTAssertEqual(UserRole.pm.profile.landing, .today)
         XCTAssertEqual(UserRole.qa.profile.captureKind, .bug)
         XCTAssertEqual(UserRole.pm.profile.captureKind, .request)
     }

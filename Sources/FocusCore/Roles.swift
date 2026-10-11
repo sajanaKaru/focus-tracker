@@ -28,12 +28,12 @@ public enum UserRole: String, CaseIterable, Identifiable, Sendable {
             )
         case .qa:
             RoleProfile(
-                sections: [.today, .qaQueue, .tickets, .board, .reports, .actionLog], landing: .qaQueue,
+                sections: [.today, .qaQueue, .tickets, .board, .reports, .actionLog], landing: .today,
                 statusOrder: [.testing, .inReview, .inProgress, .todo, .backlog, .done], captureKind: .bug
             )
         case .pm:
             RoleProfile(
-                sections: [.today, .qaQueue, .tickets, .board, .reports, .actionLog], landing: .board,
+                sections: [.today, .qaQueue, .tickets, .board, .reports, .actionLog], landing: .today,
                 statusOrder: [.inProgress, .inReview, .testing, .todo, .backlog, .done], captureKind: .request
             )
         }
