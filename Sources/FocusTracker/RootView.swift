@@ -10,6 +10,7 @@ enum SidebarItem: String, CaseIterable, Identifiable {
     case specialWork = "Data & Scripts"
     case reports = "Reports"
     case actionLog = "Action Log"
+    case qaQueue = "QA Queue"
 
     var id: String { rawValue }
 
@@ -22,6 +23,7 @@ enum SidebarItem: String, CaseIterable, Identifiable {
         case .specialWork: "externaldrive.badge.timemachine"
         case .reports: "chart.bar"
         case .actionLog: "list.clipboard"
+        case .qaQueue: "checklist.checked"
         }
     }
 
@@ -34,6 +36,7 @@ enum SidebarItem: String, CaseIterable, Identifiable {
         case .specialWork: self = .specialWork
         case .reports: self = .reports
         case .actionLog: self = .actionLog
+        case .qaQueue: self = .qaQueue
         }
     }
 }
@@ -249,6 +252,7 @@ struct RootView: View {
         case .pullRequests: store.workspacePullRequests.count
         case .specialWork: store.openSpecialWorkCount
         case .actionLog: store.failedActions.count
+        case .qaQueue: store.readyToTestCount
         default: nil
         }
     }
@@ -280,6 +284,7 @@ struct RootView: View {
         case .specialWork: SpecialWorkView(selectedTicketID: $selectedTicketID)
         case .reports: ReportsView()
         case .actionLog: ActionLogView(selectedTicketID: $selectedTicketID, filter: $logFilter)
+        case .qaQueue: QAQueueView(selectedTicketID: $selectedTicketID)
         }
     }
 

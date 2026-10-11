@@ -1,7 +1,7 @@
 import Foundation
 
 public enum AppSection: String, CaseIterable, Identifiable, Sendable {
-    case today, tickets, board, pullRequests, specialWork, reports, actionLog
+    case today, tickets, board, pullRequests, specialWork, reports, actionLog, qaQueue
 
     public var id: String { rawValue }
 }
@@ -23,17 +23,17 @@ public enum UserRole: String, CaseIterable, Identifiable, Sendable {
         switch self {
         case .dev:
             RoleProfile(
-                sections: AppSection.allCases, landing: .today,
+                sections: [.today, .tickets, .board, .pullRequests, .specialWork, .reports, .actionLog], landing: .today,
                 statusOrder: [.inProgress, .inReview, .todo, .testing, .backlog, .done], captureKind: .bug
             )
         case .qa:
             RoleProfile(
-                sections: [.today, .tickets, .board, .reports, .actionLog], landing: .tickets,
+                sections: [.today, .qaQueue, .tickets, .board, .reports, .actionLog], landing: .qaQueue,
                 statusOrder: [.testing, .inReview, .inProgress, .todo, .backlog, .done], captureKind: .bug
             )
         case .pm:
             RoleProfile(
-                sections: [.today, .tickets, .board, .reports, .actionLog], landing: .board,
+                sections: [.today, .qaQueue, .tickets, .board, .reports, .actionLog], landing: .board,
                 statusOrder: [.inProgress, .inReview, .testing, .todo, .backlog, .done], captureKind: .request
             )
         }
@@ -48,7 +48,7 @@ public struct RoleProfile: Equatable, Sendable {
     public var captureKind: QuickCaptureKind
 }
 
-public enum DeploymentEnvironment: String, CaseIterable, Identifiable, Sendable {
+public enum DeploymentEnvironment: String, Codable, CaseIterable, Identifiable, Sendable {
     case alpha, alpha2, beta, live
 
     public var id: String { rawValue }

@@ -184,6 +184,8 @@ extension GitHubClient {
             try await setIssueField(repo: repo, number: number, name: name, value: value)
         case .projectField(let project, let field, let value):
             try await updateProjectField(repo: repo, number: number, project: project, field: field, value: value)
+        case .comment(_, let body):
+            try await postComment(repo: repo, number: number, body: body)
         }
     }
 }

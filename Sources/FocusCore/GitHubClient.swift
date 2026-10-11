@@ -293,6 +293,19 @@ public struct GitHubClient: Sendable {
         _ = try await send(post: url, body: JSONEncoder().encode(["body": body]))
     }
 
+    /// Creates an issue and returns its number and web URL. Needs a token that can write issues.
+    public func createIssue(repo: String, title: String, body: String, labels: [String] = []) async throws -> (number: Int, url: String) {
+        struct Created: Decodable { let number: Int; let htmlUrl: String }
+        guard let url = URL(string: "https://\(Self.apiHost)/repos/\(repo)/issues") else { throw GitHubError.invalidResponse }
+        var payload: [String: Any] = ["title": title, "body": body]
+        if !labels.isEmpty { payload["labels"] = labels }
+        let data = try await send(post: url, body: JSONSerialization.data(withJSONObject: payload))
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        guard let created = try? decoder.decode(Created.self, from: data) else { throw GitHubError.invalidResponse }
+        return (created.number, created.htmlUrl)
+    }
+
     /// Open pull requests authored by `login` (first 100, most recently updated first) with review, CI and conflict state.
     public func fetchOpenPullRequests(authoredBy login: String) async throws -> (items: [PullRequestItem], total: Int) {
         let search = "is:pr is:open author:\(login) archived:false sort:updated-desc"

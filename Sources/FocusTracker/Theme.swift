@@ -366,6 +366,8 @@ extension ActionKind {
         case .planComment: "text.bubble.fill"
         case .dayPlan: "calendar"
         case .activity: "phone.fill"
+        case .testCase: "checklist"
+        case .bugReport: "ladybug.fill"
         }
     }
 
@@ -378,6 +380,8 @@ extension ActionKind {
         case .note, .planComment: Theme.info
         case .dayPlan: Theme.teal
         case .activity: Theme.accentEnd
+        case .testCase: Theme.teal
+        case .bugReport: Theme.danger
         }
     }
 }

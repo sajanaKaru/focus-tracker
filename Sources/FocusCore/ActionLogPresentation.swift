@@ -12,6 +12,8 @@ extension ActionKind {
         case .planComment: "Plan comment"
         case .dayPlan: "Day plan"
         case .activity: "Activity"
+        case .testCase: "Test case"
+        case .bugReport: "Bug report"
         }
     }
 }

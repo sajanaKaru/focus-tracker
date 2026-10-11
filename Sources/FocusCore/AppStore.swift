@@ -47,7 +47,11 @@ public final class AppStore {
     public private(set) var activities: [Activity] = []
     public private(set) var dayPlans: [DayPlan] = []
     public private(set) var actionLog: [ActionLogEntry] = []
-    public private(set) var dismissedFailureIDs: Set<UUID> = []
+    public internal(set) var testCases: [TestCase] = []
+    public internal(set) var testResults: [TestResult] = []
+    public internal(set) var testVerdicts: [TestVerdict] = []
+    public internal(set) var bugReports: [BugReport] = []
+    public internal(set) var dismissedFailureIDs: Set<UUID> = []
     /// GitHub issue comments per ticket; fetched on demand and kept in memory only.
     public private(set) var issueComments: [UUID: [IssueComment]] = [:]
     public private(set) var commentsError: [UUID: String] = [:]
@@ -526,6 +530,10 @@ public final class AppStore {
         entries.removeAll { $0.ticketID == id }
         notes.removeAll { $0.ticketID == id }
         planComments.removeAll { $0.ticketID == id }
+        testCases.removeAll { $0.ticketID == id }
+        testResults.removeAll { $0.ticketID == id }
+        testVerdicts.removeAll { $0.ticketID == id }
+        bugReports.removeAll { $0.ticketID == id }
         save()
     }
 
@@ -1276,6 +1284,7 @@ public final class AppStore {
         case .state(let open): return "\(open ? "Reopened" : "Closed") \(target)"
         case .issueField(let name, _): return "Set issue field \(name) on \(target)"
         case .projectField(let project, let field, _): return "Set \(field) in project \(project) on \(target)"
+        case .comment: return "Posted a comment on \(target)"
         }
     }
 
@@ -1283,6 +1292,10 @@ public final class AppStore {
     @discardableResult
     public func retry(_ entryID: UUID) async -> Bool {
         dismissedFailureIDs.remove(entryID)
+        if let n = actionLog.firstIndex(where: { $0.id == entryID }), actionLog[n].kind == .bugReport, case .failed = actionLog[n].sync,
+           let bugID = actionLog[n].bugID {
+            return await retryBug(bugID)
+        }
         guard let n = actionLog.firstIndex(where: { $0.id == entryID }), case .failed = actionLog[n].sync,
               let edit = actionLog[n].remote, let ticketID = actionLog[n].ticketID, let field = actionLog[n].field,
               let gh = ticket(ticketID)?.github, let token = tokenProvider(), !token.isEmpty else { return false }
@@ -1308,11 +1321,11 @@ public final class AppStore {
     func record(
         _ kind: ActionKind, ticket: Ticket? = nil, field: String? = nil, old: String? = nil, new: String? = nil,
         oldList: [String]? = nil, newList: [String]? = nil, sync: ActionSync = .notApplicable,
-        detail: String? = nil, remote: RemoteEdit? = nil, at date: Date = Date()
+        detail: String? = nil, remote: RemoteEdit? = nil, bugID: UUID? = nil, at date: Date = Date()
     ) -> UUID {
         let entry = ActionLogEntry(
             timestamp: date, kind: kind, ticketID: ticket?.id, ticketKey: ticket?.displayKey, ticketTitle: ticket?.title,
-            field: field, oldValue: old, newValue: new, oldList: oldList, newList: newList, sync: sync, githubDetail: detail, remote: remote
+            field: field, oldValue: old, newValue: new, oldList: oldList, newList: newList, sync: sync, githubDetail: detail, remote: remote, bugID: bugID
         )
         actionLog.append(entry)
         return entry.id
@@ -1352,6 +1365,10 @@ public final class AppStore {
         var dayPlans: [DayPlan]?
         var actionLog: [ActionLogEntry]?
         var remoteOptions: RemoteOptions?
+        var testCases: [TestCase]?
+        var testResults: [TestResult]?
+        var testVerdicts: [TestVerdict]?
+        var bugReports: [BugReport]?
     }
 
     /// Older files stored one free-text `notes` string per ticket.
@@ -1377,6 +1394,10 @@ public final class AppStore {
             dayPlans = snapshot.dayPlans ?? []
             actionLog = snapshot.actionLog ?? []
             remoteOptions = snapshot.remoteOptions ?? RemoteOptions()
+            testCases = snapshot.testCases ?? []
+            testResults = snapshot.testResults ?? []
+            testVerdicts = snapshot.testVerdicts ?? []
+            bugReports = snapshot.bugReports ?? []
             if let saved = snapshot.notes {
                 notes = saved
             } else if let legacy = try? decoder.decode(LegacySnapshot.self, from: data) {
@@ -1390,13 +1411,18 @@ public final class AppStore {
         }
     }
 
-    private func save() {
+    func save() {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         do {
             try FileManager.default.createDirectory(at: storeURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-            let data = try encoder.encode(Snapshot(tickets: tickets, entries: entries, notes: notes, planComments: planComments, activities: activities, dayPlans: dayPlans, actionLog: actionLog, remoteOptions: remoteOptions))
+            let snapshot = Snapshot(
+                tickets: tickets, entries: entries, notes: notes, planComments: planComments, activities: activities, dayPlans: dayPlans,
+                actionLog: actionLog, remoteOptions: remoteOptions, testCases: testCases, testResults: testResults,
+                testVerdicts: testVerdicts, bugReports: bugReports
+            )
+            let data = try encoder.encode(snapshot)
             try data.write(to: storeURL, options: .atomic)
         } catch {
             notice = "Could not save data: \(error.localizedDescription)"

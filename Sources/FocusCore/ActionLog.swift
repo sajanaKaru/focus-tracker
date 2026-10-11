@@ -1,7 +1,7 @@
 import Foundation
 
 public enum ActionKind: String, Codable, CaseIterable, Sendable {
-    case ticketCreate, ticketEdit, ticketDelete, timer, timeEntry, note, planComment, dayPlan, activity
+    case ticketCreate, ticketEdit, ticketDelete, timer, timeEntry, note, planComment, dayPlan, activity, testCase, bugReport
 }
 
 public enum ActionSync: Codable, Equatable, Sendable {
@@ -36,12 +36,14 @@ public struct ActionLogEntry: Codable, Identifiable, Equatable, Sendable {
     public var githubDetail: String?
     /// The GitHub change this entry pushed; lets a failed entry be retried.
     public var remote: RemoteEdit?
+    /// The bug a `.bugReport` entry created, so a failed creation can be retried.
+    public var bugID: UUID?
     public init(
         id: UUID = UUID(), timestamp: Date = Date(), kind: ActionKind,
         ticketID: UUID? = nil, ticketKey: String? = nil, ticketTitle: String? = nil,
         field: String? = nil, oldValue: String? = nil, newValue: String? = nil,
         oldList: [String]? = nil, newList: [String]? = nil,
-        sync: ActionSync = .notApplicable, githubDetail: String? = nil, remote: RemoteEdit? = nil
+        sync: ActionSync = .notApplicable, githubDetail: String? = nil, remote: RemoteEdit? = nil, bugID: UUID? = nil
     ) {
         self.id = id
         self.timestamp = timestamp
@@ -57,6 +59,7 @@ public struct ActionLogEntry: Codable, Identifiable, Equatable, Sendable {
         self.sync = sync
         self.githubDetail = githubDetail
         self.remote = remote
+        self.bugID = bugID
     }
 }
 

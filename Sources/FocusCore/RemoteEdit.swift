@@ -14,6 +14,8 @@ public enum RemoteEdit: Codable, Equatable, Sendable {
     case state(open: Bool)
     case issueField(name: String, value: IssueFieldValue?)
     case projectField(project: String, field: String, value: ProjectFieldValue)
+    /// A new issue comment; the id keeps every comment in its own slot so none is coalesced away.
+    case comment(id: UUID, body: String)
 
     /// What the edit overwrites; repeated edits of the same slot are coalesced.
     public var slot: String {
@@ -25,6 +27,7 @@ public enum RemoteEdit: Codable, Equatable, Sendable {
         case .state: "state"
         case .issueField(let name, _): "issueField:\(name)"
         case .projectField(let project, let field, _): "project:\(project):\(field)"
+        case .comment(let id, _): "comment:\(id.uuidString)"
         }
     }
 }
