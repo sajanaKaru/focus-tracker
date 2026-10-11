@@ -76,7 +76,10 @@ public final class AppStore {
     public private(set) var syncState: SyncState = .idle
     public var notice: String?
 
-    @ObservationIgnored private let storeURL: URL
+    public internal(set) var backupVersions: [BackupVersion] = []
+
+    @ObservationIgnored let storeURL: URL
+    @ObservationIgnored let backupVault: BackupVault
     @ObservationIgnored let defaults: UserDefaults
     @ObservationIgnored let transport: HTTPTransport
     @ObservationIgnored let tokenProvider: () -> String?
@@ -106,6 +109,7 @@ public final class AppStore {
         aiKeyProvider: @escaping (AIProvider) -> String? = { Keychain.get(account: $0.keychainAccount) }
     ) {
         self.storeURL = storeURL
+        backupVault = BackupVault(directory: storeURL.deletingLastPathComponent().appendingPathComponent("Backups", isDirectory: true))
         self.defaults = defaults
         self.transport = transport
         self.tokenProvider = tokenProvider

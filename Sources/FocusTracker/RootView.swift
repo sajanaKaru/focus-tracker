@@ -11,6 +11,7 @@ enum SidebarItem: String, CaseIterable, Identifiable {
     case reports = "Reports"
     case actionLog = "Action Log"
     case qaQueue = "QA Queue"
+    case backup = "Backup"
 
     var id: String { rawValue }
 
@@ -24,6 +25,7 @@ enum SidebarItem: String, CaseIterable, Identifiable {
         case .reports: "chart.bar"
         case .actionLog: "list.clipboard"
         case .qaQueue: "checklist.checked"
+        case .backup: "externaldrive"
         }
     }
 
@@ -37,6 +39,7 @@ enum SidebarItem: String, CaseIterable, Identifiable {
         case .reports: self = .reports
         case .actionLog: self = .actionLog
         case .qaQueue: self = .qaQueue
+        case .backup: self = .backup
         }
     }
 }
@@ -285,6 +288,7 @@ struct RootView: View {
         case .reports: ReportsView()
         case .actionLog: ActionLogView(selectedTicketID: $selectedTicketID, filter: $logFilter)
         case .qaQueue: QAQueueView(selectedTicketID: $selectedTicketID)
+        case .backup: BackupView()
         }
     }
 

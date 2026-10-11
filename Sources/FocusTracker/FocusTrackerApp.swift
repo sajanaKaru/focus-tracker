@@ -62,6 +62,7 @@ private struct MenuBarLabel: View {
         }
         .task { delegate.openMainWindow = { openWindow(id: "main") } }
         .task { license.startMonitoring() }
+        .task { store.backUpIfDue() }
         .task(id: license.isActive) {
             if license.isActive { store.startAutoSync() } else { store.stopAutoSync() }
         }
