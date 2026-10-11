@@ -15,6 +15,8 @@ public enum PrefKey {
     public static let workspace = "selectedWorkspace"
     public static let hiddenWorkspaces = "hiddenWorkspaces"
     public static let role = "userRole"
+    public static let aiProvider = "aiProvider"
+    public static let aiModelPrefix = "aiModel."
 }
 
 public enum SyncState: Equatable, Sendable {
@@ -75,9 +77,10 @@ public final class AppStore {
     public var notice: String?
 
     @ObservationIgnored private let storeURL: URL
-    @ObservationIgnored private let defaults: UserDefaults
+    @ObservationIgnored let defaults: UserDefaults
     @ObservationIgnored let transport: HTTPTransport
     @ObservationIgnored let tokenProvider: () -> String?
+    @ObservationIgnored let aiKeyProvider: (AIProvider) -> String?
     @ObservationIgnored private var lastOptionsLoad: Date?
     @ObservationIgnored private let idleSeconds: () -> TimeInterval
     @ObservationIgnored private var tickTask: Task<Void, Never>?
@@ -99,12 +102,14 @@ public final class AppStore {
         defaults: UserDefaults = .standard,
         transport: HTTPTransport = URLSessionTransport(),
         tokenProvider: @escaping () -> String? = { Keychain.get(account: Keychain.githubAccount) },
-        idleSeconds: @escaping () -> TimeInterval = IdleTime.current
+        idleSeconds: @escaping () -> TimeInterval = IdleTime.current,
+        aiKeyProvider: @escaping (AIProvider) -> String? = { Keychain.get(account: $0.keychainAccount) }
     ) {
         self.storeURL = storeURL
         self.defaults = defaults
         self.transport = transport
         self.tokenProvider = tokenProvider
+        self.aiKeyProvider = aiKeyProvider
         self.idleSeconds = idleSeconds
         githubLogin = defaults.string(forKey: PrefKey.githubLogin)
         hiddenWorkspaces = Set(defaults.stringArray(forKey: PrefKey.hiddenWorkspaces) ?? [])

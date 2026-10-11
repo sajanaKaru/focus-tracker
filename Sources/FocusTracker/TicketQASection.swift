@@ -8,6 +8,7 @@ struct TicketQASection: View {
     @State private var casesLoaded = false
     @State private var editingCase: TestCase?
     @State private var addingCase = false
+    @State private var drafting = false
     @State private var verdict: VerdictOutcome?
     @State private var reportingBug = false
 
@@ -33,6 +34,9 @@ struct TicketQASection: View {
                 TestCaseRow(testCase: testCase, environment: environment) { editingCase = testCase }
             }
             Button { addingCase = true } label: { Label("Add test case", systemImage: "plus") }
+            Button { drafting = true } label: { Label("Draft test cases with AI", systemImage: "sparkles") }
+                .disabled(!store.hasAIKey)
+                .help(store.hasAIKey ? "Draft cases from the ticket and its pull requests" : "Add an AI API key in Settings")
 
             HStack {
                 Button { verdict = .pass } label: { Label("Mark passed", systemImage: "checkmark.circle") }
@@ -51,6 +55,7 @@ struct TicketQASection: View {
         }
         .onChange(of: ticket.environment) { environment = ticket.environment }
         .sheet(isPresented: $addingCase) { TestCaseSheet(ticketID: ticket.id, existing: nil) }
+        .sheet(isPresented: $drafting) { DraftCasesSheet(ticket: ticket) }
         .sheet(item: $editingCase) { TestCaseSheet(ticketID: ticket.id, existing: $0) }
         .sheet(item: $verdict) { VerdictSheet(ticket: ticket, environment: environment, outcome: $0) }
         .sheet(isPresented: $reportingBug) { BugSheet(ticket: ticket, defaultEnvironment: environment) }

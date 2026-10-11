@@ -12,6 +12,12 @@ struct SettingsView: View {
     @AppStorage(PrefKey.focusPercent) private var focusPercent = 75
     @AppStorage(PrefKey.defaultEstimateMinutes) private var defaultEstimateMinutes = 60
     @AppStorage(PrefKey.workDays) private var workDays = 5
+    @AppStorage(PrefKey.aiProvider) private var aiProviderRaw = AIProvider.openAI.rawValue
+
+    @State private var aiKey = ""
+    @State private var aiModel = ""
+    @State private var aiHasKey = false
+    @State private var aiMessage: String?
 
     @State private var token = ""
     @State private var hasToken = Keychain.get(account: Keychain.githubAccount) != nil
@@ -59,6 +65,8 @@ struct SettingsView: View {
                 Stepper("Auto-sync every \(syncMinutes) min", value: $syncMinutes, in: 1...120)
             }
 
+            aiSection
+
             Section("Workspaces") {
                 if store.knownWorkspaces.isEmpty {
                     Text("Connect GitHub and sync to list your personal and organization workspaces.")
@@ -92,7 +100,56 @@ struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
-        .frame(width: 520, height: 560)
+        .frame(width: 520, height: 680)
+    }
+
+    private var aiProvider: AIProvider { AIProvider(rawValue: aiProviderRaw) ?? .openAI }
+
+    private var aiSection: some View {
+        Section("AI test case drafts") {
+            Picker("Provider", selection: $aiProviderRaw) {
+                ForEach(AIProvider.allCases) { Text($0.title).tag($0.rawValue) }
+            }
+            TextField("Model", text: $aiModel, prompt: Text(aiProvider.defaultModel))
+                .onSubmit { store.setAIModel(aiModel, for: aiProvider) }
+            SecureField("\(aiProvider.title) API key", text: $aiKey)
+            HStack {
+                Button("Save") { saveAIKey() }
+                    .disabled(aiKey.trimmingCharacters(in: .whitespaces).isEmpty)
+                if aiHasKey {
+                    Button("Remove key", role: .destructive) {
+                        Keychain.delete(account: aiProvider.keychainAccount)
+                        aiHasKey = false
+                        aiMessage = "Key removed."
+                    }
+                }
+            }
+            if let aiMessage { Text(aiMessage).font(.caption).foregroundStyle(.secondary) }
+            Text("Drafting sends the ticket text and linked pull requests' titles, descriptions and changed file names to the selected provider. Keys are stored in the macOS Keychain.")
+                .font(.caption).foregroundStyle(.secondary)
+        }
+        .onAppear { loadAI() }
+        .onChange(of: aiProviderRaw) { loadAI() }
+    }
+
+    private func loadAI() {
+        aiModel = store.aiModel(for: aiProvider) == aiProvider.defaultModel ? "" : store.aiModel(for: aiProvider)
+        aiHasKey = Keychain.get(account: aiProvider.keychainAccount) != nil
+        aiKey = ""
+        aiMessage = nil
+    }
+
+    private func saveAIKey() {
+        let value = aiKey.trimmingCharacters(in: .whitespaces)
+        store.setAIModel(aiModel, for: aiProvider)
+        do {
+            try Keychain.set(value, account: aiProvider.keychainAccount)
+            aiKey = ""
+            aiHasKey = true
+            aiMessage = "Saved."
+        } catch {
+            aiMessage = error.localizedDescription
+        }
     }
 
     private func saveToken() async {
