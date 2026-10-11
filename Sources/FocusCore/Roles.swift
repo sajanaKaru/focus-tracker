@@ -66,6 +66,17 @@ public enum DeploymentEnvironment: String, Codable, CaseIterable, Identifiable, 
     public init?(statusName: String) {
         let name = statusName.lowercased()
         guard name.contains("deploy") else { return nil }
+        self.init(environmentIn: name)
+    }
+
+    /// Like `init(statusName:)` but also accepts "Merged to Beta"-style names, for reading status history.
+    public init?(deploymentName: String) {
+        let name = deploymentName.lowercased()
+        guard name.contains("deploy") || name.contains("merged to") || name.contains("merged into") else { return nil }
+        self.init(environmentIn: name)
+    }
+
+    private init?(environmentIn name: String) {
         let compact = name.filter { !$0.isWhitespace && $0 != "-" && $0 != "_" }
         if compact.contains("alpha2") { self = .alpha2 }
         else if name.contains("alpha") { self = .alpha }
@@ -76,8 +87,8 @@ public enum DeploymentEnvironment: String, Codable, CaseIterable, Identifiable, 
 }
 
 extension Ticket {
-    /// Environment named by the project Status; nil for local tickets and non-deployment statuses.
+    /// Environment named by the project Status, else by the last status move into a deployment; nil for local tickets.
     public var environment: DeploymentEnvironment? {
-        projectStatusField.flatMap { DeploymentEnvironment(statusName: $0.value) }
+        projectStatusField.flatMap { DeploymentEnvironment(deploymentName: $0.value) } ?? deployment?.environment
     }
 }

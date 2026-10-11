@@ -168,6 +168,8 @@ public struct Ticket: Identifiable, Codable, Hashable, Sendable {
     public var isQuickCapture: Bool?
     /// Log field names whose last push to GitHub failed; sync keeps the local value for them.
     public var unsynced: [String]?
+    /// Last status move into a deployment, read from the issue's project history.
+    public var deployment: DeploymentMark?
 
     public init(
         id: UUID = UUID(),
@@ -187,7 +189,8 @@ public struct Ticket: Identifiable, Codable, Hashable, Sendable {
         updatedAt: Date = Date(),
         github: GitHubRef? = nil,
         isQuickCapture: Bool? = nil,
-        unsynced: [String]? = nil
+        unsynced: [String]? = nil,
+        deployment: DeploymentMark? = nil
     ) {
         self.id = id
         self.title = title
@@ -207,6 +210,7 @@ public struct Ticket: Identifiable, Codable, Hashable, Sendable {
         self.github = github
         self.isQuickCapture = isQuickCapture
         self.unsynced = unsynced
+        self.deployment = deployment
     }
 
     public var displayKey: String {

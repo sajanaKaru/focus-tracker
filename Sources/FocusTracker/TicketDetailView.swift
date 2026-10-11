@@ -51,10 +51,6 @@ struct TicketDetailView: View {
                     }
                 }
 
-                DescriptionSection(ticket: ticket)
-
-                TicketCommentsSection(ticket: ticket, onPlan: onPlan)
-
                 if isRemote {
                     TicketQASection(ticket: ticket).id(ticketID)
                 }
@@ -126,7 +122,6 @@ struct TicketDetailView: View {
             }
             .formStyle(.grouped)
             .sheet(item: $editing) { EditLogSheet(target: $0) }
-            .task(id: ticketID) { await store.loadComments(ticketID, minimumInterval: 0) }
             .task(id: ticketID) {
                 await store.refreshTicket(ticketID)
                 await store.loadOptions()

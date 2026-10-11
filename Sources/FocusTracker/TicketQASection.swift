@@ -21,6 +21,10 @@ struct TicketQASection: View {
                 Text("No environment").tag(DeploymentEnvironment?.none)
                 ForEach(DeploymentEnvironment.allCases) { Text($0.title).tag(DeploymentEnvironment?.some($0)) }
             }
+            if let mark = ticket.deployment {
+                Text("Moved to “\(mark.statusName)” on \(mark.movedAt.formatted(date: .abbreviated, time: .omitted))\(mark.movedBy.map { " by @\($0)" } ?? "")")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
             HStack {
                 Chip(text: state.title, color: state.color)
                 Text(summary.text).font(.callout).foregroundStyle(.secondary)

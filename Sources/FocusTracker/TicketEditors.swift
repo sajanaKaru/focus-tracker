@@ -190,60 +190,6 @@ struct TitleEditor: View {
     }
 }
 
-struct DescriptionSection: View {
-    let ticket: Ticket
-    @State private var editing = false
-
-    var body: some View {
-        Section("Description") {
-            if ticket.body.isEmpty {
-                Text("No description").foregroundStyle(.secondary)
-            } else {
-                DescriptionView(markdown: ticket.body)
-            }
-            Button { editing = true } label: { Label("Edit description", systemImage: "pencil") }
-        }
-        .sheet(isPresented: $editing) { EditDescriptionSheet(ticketID: ticket.id, initial: ticket.body) }
-    }
-}
-
-private struct EditDescriptionSheet: View {
-    @Environment(AppStore.self) private var store
-    @Environment(\.dismiss) private var dismiss
-    let ticketID: UUID
-    @State private var draft: String
-
-    init(ticketID: UUID, initial: String) {
-        self.ticketID = ticketID
-        _draft = State(initialValue: initial)
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Edit description").font(.title3.weight(.semibold))
-            TextEditor(text: $draft)
-                .font(.body.monospaced())
-                .scrollContentBackground(.hidden)
-                .padding(8)
-                .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-                .frame(minHeight: 280)
-            HStack {
-                Spacer()
-                Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
-                Button("Save") {
-                    store.setBody(ticketID, draft)
-                    dismiss()
-                }
-                .buttonStyle(.borderedProminent)
-                .keyboardShortcut(.return, modifiers: .command)
-                .disabled(draft == store.ticket(ticketID)?.body)
-            }
-        }
-        .padding(20)
-        .frame(width: 560)
-    }
-}
-
 struct TicketHistorySection: View {
     @Environment(AppStore.self) private var store
     let ticketID: UUID

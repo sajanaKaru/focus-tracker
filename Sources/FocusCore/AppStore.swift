@@ -809,6 +809,7 @@ public final class AppStore {
                 if let fields = issueFields[enriched[i].key] { enriched[i].issueFields = fields }
             }
             tickets = Self.merge(existing: tickets, remote: enriched)
+            applyDeployments(await deploymentMoves(for: enriched, client: client), to: enriched)
             syncState = .succeeded(Date(), remote.count)
             save()
         } catch {
@@ -870,6 +871,20 @@ public final class AppStore {
         return needsAccess ? "\(message) Needs Pull requests: Read (and Commit statuses / Checks: Read for CI)." : message
     }
 
+    /// Status history is optional: when it can't be read, tickets keep their previous deployment.
+    private func deploymentMoves(for issues: [RemoteIssue], client: GitHubClient) async -> [String: [StatusMove]] {
+        let ids = issues.map(\.nodeID).filter { !$0.isEmpty }
+        guard !ids.isEmpty else { return [:] }
+        return (try? await client.fetchStatusMoves(nodeIDs: ids)) ?? [:]
+    }
+
+    private func applyDeployments(_ moves: [String: [StatusMove]], to issues: [RemoteIssue]) {
+        for issue in issues {
+            guard let list = moves[issue.nodeID], let i = tickets.firstIndex(where: { $0.github?.key == issue.key }) else { continue }
+            tickets[i].deployment = DeploymentHistory.lastDeployment(in: list, project: tickets[i].projectStatusField?.project)
+        }
+    }
+
     /// Project fields are optional: if they can't be read, tickets keep their previous values.
     private func withProjectFields(_ issues: [RemoteIssue], client: GitHubClient) async -> [RemoteIssue] {
         let ids = issues.map(\.nodeID).filter { !$0.isEmpty }
@@ -916,9 +931,13 @@ public final class AppStore {
         if let fields = try? await client.fetchIssueFields(repo: gh.repo, number: gh.number) {
             issue.issueFields = fields
         }
+        let moves = issue.nodeID.isEmpty ? nil : try? await client.fetchStatusMoves(nodeIDs: [issue.nodeID])
         guard let i = tickets.firstIndex(where: { $0.id == id }) else { return }
         var updated = tickets[i]
         Self.copyContent(from: issue, into: &updated)
+        if let list = moves?[issue.nodeID] {
+            updated.deployment = DeploymentHistory.lastDeployment(in: list, project: updated.projectStatusField?.project)
+        }
         if !issue.isOpen, var ref = updated.github, !ref.remoteClosed {
             ref.remoteClosed = true
             updated.github = ref
@@ -1199,6 +1218,10 @@ public final class AppStore {
     }
 
     func insertTicketForTest(_ ticket: Ticket) { tickets.append(ticket) }
+
+    func clearDeploymentForTest(_ id: UUID) {
+        if let i = tickets.firstIndex(where: { $0.id == id }) { tickets[i].deployment = nil }
+    }
 
     func storeOptions(_ options: RemoteOptions) {
         remoteOptions = options
