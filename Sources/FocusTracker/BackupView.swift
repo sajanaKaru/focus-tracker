@@ -4,12 +4,15 @@ import SwiftUI
 
 struct BackupView: View {
     @Environment(AppStore.self) private var store
+    @State private var uploadedFile: URL?
 
     var body: some View {
         VStack(spacing: 0) {
             HStack(alignment: .top) {
-                PageHeader(title: "Backup", subtitle: "Saved versions of your data. Download any version as a JSON file.")
+                PageHeader(title: "Backup", subtitle: "Saved versions of your data. Download or restore any version, or restore from a backup file.")
                 Spacer()
+                Button { chooseFile() } label: { Label("Restore from file…", systemImage: "square.and.arrow.up") }
+                    .buttonStyle(.secondary)
                 Button { store.createBackup() } label: { Label("Back up now", systemImage: "externaldrive.badge.plus") }
                     .buttonStyle(.primary)
             }
@@ -31,6 +34,25 @@ struct BackupView: View {
         }
         .background(Theme.pageBackground)
         .task { store.refreshBackups() }
+        .confirmDestructive(
+            Binding(get: { uploadedFile != nil }, set: { if !$0 { uploadedFile = nil } }),
+            title: "Restore from \(uploadedFile?.lastPathComponent ?? "this file")?",
+            message: "This replaces all current data with the file's contents. Your current data is saved as a new backup first.",
+            confirmLabel: "Restore"
+        ) {
+            if let url = uploadedFile { store.restore(from: url) }
+            uploadedFile = nil
+        }
+    }
+
+    private func chooseFile() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.json]
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        panel.message = "Choose a Focus Tracker backup file"
+        guard panel.runModal() == .OK else { return }
+        uploadedFile = panel.url
     }
 
     private func download(_ version: BackupVersion) {
@@ -48,6 +70,7 @@ private struct BackupRow: View {
     @Environment(AppStore.self) private var store
     let version: BackupVersion
     let download: () -> Void
+    @State private var confirmingRestore = false
 
     var body: some View {
         HStack(spacing: 12) {
@@ -59,6 +82,14 @@ private struct BackupRow: View {
                     .foregroundStyle(.secondary)
             }
             Spacer(minLength: 8)
+            Button { confirmingRestore = true } label: { Label("Restore", systemImage: "arrow.counterclockwise") }
+                .buttonStyle(.secondary)
+                .confirmDestructive(
+                    $confirmingRestore,
+                    title: "Restore the backup from \(version.createdAt.formatted(date: .abbreviated, time: .shortened))?",
+                    message: "This replaces all current data. Your current data is saved as a new backup first.",
+                    confirmLabel: "Restore"
+                ) { store.restore(from: version.url) }
             Button(action: download) { Label("Download", systemImage: "arrow.down.circle") }
                 .buttonStyle(.secondary)
             DeleteButton(title: "Delete this backup?", help: "Delete version") { store.deleteBackup(version) }

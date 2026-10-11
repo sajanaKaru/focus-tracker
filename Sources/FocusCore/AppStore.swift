@@ -1439,32 +1439,70 @@ public final class AppStore {
 
     private func load() {
         guard let data = try? Data(contentsOf: storeURL) else { return }
+        do {
+            try apply(data)
+        } catch {
+            notice = "Could not read saved data: \(error.localizedDescription)"
+        }
+    }
+
+    /// Replaces all stored data with the contents of a data file at `url`; the current data is backed up first.
+    @discardableResult
+    public func restore(from url: URL) -> Bool {
+        let data: Data
+        do {
+            data = try Data(contentsOf: url)
+            _ = try decodeSnapshot(data)
+        } catch {
+            notice = "Could not restore: this is not a valid Focus Tracker backup (\(error.localizedDescription))"
+            return false
+        }
+        guard createBackup() != nil else { return false }
+        do {
+            try apply(data)
+        } catch {
+            notice = "Could not restore: \(error.localizedDescription)"
+            return false
+        }
+        save()
+        issueComments = [:]
+        if activeEntry != nil || activeActivity != nil { startTicking() }
+        notice = "Backup restored."
+        return true
+    }
+
+    private func decodeSnapshot(_ data: Data) throws -> Snapshot {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
-        do {
-            let snapshot = try decoder.decode(Snapshot.self, from: data)
-            tickets = snapshot.tickets
-            entries = snapshot.entries
-            activities = snapshot.activities ?? []
-            planComments = snapshot.planComments ?? []
-            dayPlans = snapshot.dayPlans ?? []
-            actionLog = snapshot.actionLog ?? []
-            remoteOptions = snapshot.remoteOptions ?? RemoteOptions()
-            testCases = snapshot.testCases ?? []
-            testResults = snapshot.testResults ?? []
-            testVerdicts = snapshot.testVerdicts ?? []
-            bugReports = snapshot.bugReports ?? []
-            qaDayPlans = snapshot.qaDayPlans ?? []
-            if let saved = snapshot.notes {
-                notes = saved
-            } else if let legacy = try? decoder.decode(LegacySnapshot.self, from: data) {
+        return try decoder.decode(Snapshot.self, from: data)
+    }
+
+    private func apply(_ data: Data) throws {
+        let snapshot = try decodeSnapshot(data)
+        notes = []
+        tickets = snapshot.tickets
+        entries = snapshot.entries
+        activities = snapshot.activities ?? []
+        planComments = snapshot.planComments ?? []
+        dayPlans = snapshot.dayPlans ?? []
+        actionLog = snapshot.actionLog ?? []
+        remoteOptions = snapshot.remoteOptions ?? RemoteOptions()
+        testCases = snapshot.testCases ?? []
+        testResults = snapshot.testResults ?? []
+        testVerdicts = snapshot.testVerdicts ?? []
+        bugReports = snapshot.bugReports ?? []
+        qaDayPlans = snapshot.qaDayPlans ?? []
+        if let saved = snapshot.notes {
+            notes = saved
+        } else {
+            let decoder = JSONDecoder()
+            decoder.dateDecodingStrategy = .iso8601
+            if let legacy = try? decoder.decode(LegacySnapshot.self, from: data) {
                 notes = legacy.tickets.compactMap { t in
                     let text = (t.notes ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
                     return text.isEmpty ? nil : TicketNote(ticketID: t.id, text: text, createdAt: t.updatedAt)
                 }
             }
-        } catch {
-            notice = "Could not read saved data: \(error.localizedDescription)"
         }
     }
 

@@ -60,6 +60,26 @@ final class BackupTests: XCTestCase {
         XCTAssertTrue(store.backupVersions.isEmpty)
     }
 
+    func testRestoreReplacesDataAndKeepsSafetyBackup() throws {
+        let store = makeStore()
+        store.addTicket(title: "Before")
+        let version = try XCTUnwrap(store.createBackup())
+        store.addTicket(title: "After")
+        XCTAssertEqual(store.tickets.count, 2)
+        XCTAssertTrue(store.restore(from: version.url))
+        XCTAssertEqual(store.tickets.map(\.title), ["Before"])
+        XCTAssertGreaterThanOrEqual(store.backupVersions.count, 1)
+    }
+
+    func testRestoreRejectsInvalidFileAndKeepsData() throws {
+        let store = makeStore()
+        store.addTicket(title: "Keep")
+        let bad = dir.appendingPathComponent("bad.json")
+        try Data("{\"nope\":1}".utf8).write(to: bad)
+        XCTAssertFalse(store.restore(from: bad))
+        XCTAssertEqual(store.tickets.map(\.title), ["Keep"])
+    }
+
     func testAutomaticBackupSkippedWhenRecent() throws {
         let store = makeStore()
         store.save()
