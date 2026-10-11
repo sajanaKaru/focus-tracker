@@ -49,8 +49,10 @@ extension TicketStatus {
         func has(_ words: [String]) -> Bool { words.contains { n.contains($0) } }
         let words = n.split { !$0.isLetter }.map(String.init)
         let isDev = words.contains("dev")
+        // Deployed to Alpha/Alpha2/Beta is awaiting QA; deployed to Live is finished.
+        if let environment = DeploymentEnvironment(statusName: optionName) { self = environment == .live ? .done : .testing }
         // Won't fix and duplicates need no work; ready-for-live/beta and release-ready are already merged.
-        if has(["won't fix", "wont fix", "duplicate"]) { self = .done }
+        else if has(["won't fix", "wont fix", "duplicate"]) { self = .done }
         else if has(["ready for dev", "prioritised", "prioritized"]) { self = .todo }
         else if has(["done", "complete", "closed", "shipped", "released", "merged", "ready for live", "ready for beta", "release ready"]) { self = .done }
         else if has(["review"]) { self = .inReview }

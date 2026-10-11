@@ -63,11 +63,11 @@ struct TicketsView: View {
     @State private var showDone = false
 
     var body: some View {
-        let visible = store.tickets(matching: filter).filter { showDone || $0.status != .done }
+        let visible = store.tickets(matching: filter).filter { showDone || filter.environment == .live || $0.status != .done }
 
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 18) {
-                ForEach(TicketStatus.allCases.reversed().filter { $0 != .done } + [.done]) { status in
+                ForEach(store.role.profile.statusOrder) { status in
                     let group = visible.filter { $0.status == status }.sorted { $0.updatedAt > $1.updatedAt }
                     if !group.isEmpty {
                         VStack(alignment: .leading, spacing: 8) {

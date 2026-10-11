@@ -32,6 +32,7 @@ struct QuickCaptureSheet: View {
         .formStyle(.grouped)
         .frame(width: 440)
         .padding()
+        .onAppear { kind = store.role.profile.captureKind }
     }
 
     private func start() {

@@ -14,6 +14,7 @@ public enum PrefKey {
     public static let githubLogin = "githubLogin"
     public static let workspace = "selectedWorkspace"
     public static let hiddenWorkspaces = "hiddenWorkspaces"
+    public static let role = "userRole"
 }
 
 public enum SyncState: Equatable, Sendable {
@@ -60,6 +61,10 @@ public final class AppStore {
     public var selectedWorkspace: Workspace = .all {
         didSet { defaults.set(selectedWorkspace.storageValue, forKey: PrefKey.workspace) }
     }
+    /// A UI preference (tabs, ordering, defaults), not an access control.
+    public var role: UserRole = .dev {
+        didSet { defaults.set(role.rawValue, forKey: PrefKey.role) }
+    }
     /// Updated every second while a timer runs; views read it to stay live.
     public private(set) var now = Date()
     public private(set) var syncState: SyncState = .idle
@@ -100,6 +105,7 @@ public final class AppStore {
         githubLogin = defaults.string(forKey: PrefKey.githubLogin)
         hiddenWorkspaces = Set(defaults.stringArray(forKey: PrefKey.hiddenWorkspaces) ?? [])
         selectedWorkspace = Workspace(storageValue: defaults.string(forKey: PrefKey.workspace))
+        role = defaults.string(forKey: PrefKey.role).flatMap(UserRole.init(rawValue:)) ?? .dev
         load()
         if activeEntry != nil || activeActivity != nil { startTicking() }
     }

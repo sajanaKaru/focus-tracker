@@ -15,6 +15,8 @@ struct FilterBar: View {
                 .disabled(filter.source == .local)
             sprintMenu
                 .disabled(filter.source == .local)
+            environmentMenu
+                .disabled(filter.source == .local)
             Spacer()
             if filter.isActive {
                 if showsCount {
@@ -103,6 +105,23 @@ struct FilterBar: View {
             .labelsHidden()
         } label: {
             FilterLabel(title: milestoneTitle, symbol: "flag.checkered", active: filter.milestone != .any)
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+    }
+
+    private var environmentMenu: some View {
+        Menu {
+            Picker("Environment", selection: $filter.environment) {
+                Text("All environments").tag(DeploymentEnvironment?.none)
+                Divider()
+                ForEach(DeploymentEnvironment.allCases) { Text($0.title).tag(DeploymentEnvironment?.some($0)) }
+            }
+            .pickerStyle(.inline)
+            .labelsHidden()
+        } label: {
+            FilterLabel(title: filter.environment?.title ?? "Environment", symbol: "shippingbox.circle", active: filter.environment != nil)
         }
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)

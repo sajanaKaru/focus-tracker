@@ -102,6 +102,7 @@ struct MenuBarView: View {
         }
         .padding(14)
         .frame(width: 320)
+        .onAppear { captureKind = store.role.profile.captureKind }
     }
 
     private func startCapture() {

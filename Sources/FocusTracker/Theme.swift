@@ -126,10 +126,24 @@ struct LabelChips: View {
     }
 }
 
+extension DeploymentEnvironment {
+    var color: Color {
+        switch self {
+        case .alpha: Theme.orange
+        case .alpha2: Theme.warning
+        case .beta: Theme.info
+        case .live: Theme.success
+        }
+    }
+}
+
 struct MetaChips: View {
     let ticket: Ticket
 
     var body: some View {
+        if let environment = ticket.environment {
+            Chip(text: environment.title, color: environment.color, symbol: "shippingbox.fill")
+        }
         if let type = ticket.issueType {
             Chip(text: type.name, color: GitHubColor.color(type.color) ?? .secondary, symbol: "tag.fill")
         }

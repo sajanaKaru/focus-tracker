@@ -24,6 +24,18 @@ enum SidebarItem: String, CaseIterable, Identifiable {
         case .actionLog: "list.clipboard"
         }
     }
+
+    init(section: AppSection) {
+        switch section {
+        case .today: self = .today
+        case .tickets: self = .tickets
+        case .board: self = .board
+        case .pullRequests: self = .pullRequests
+        case .specialWork: self = .specialWork
+        case .reports: self = .reports
+        case .actionLog: self = .actionLog
+        }
+    }
 }
 
 private struct SidebarRow: View {
@@ -84,7 +96,7 @@ private struct TitleBarStrip: View {
 
 struct RootView: View {
     @Environment(AppStore.self) private var store
-    @State private var selection: SidebarItem? = .today
+    @State private var selection: SidebarItem?
     @State private var selectedTicketID: UUID?
     @State private var planTicketID: UUID?
     @State private var showingNewTicket = false
@@ -97,6 +109,10 @@ struct RootView: View {
     @FocusState private var searchFocused: Bool
 
     private var isSearching: Bool { !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+
+    private var visibleItems: [SidebarItem] { store.role.profile.sections.map(SidebarItem.init(section:)) }
+
+    private var currentItem: SidebarItem { selection ?? SidebarItem(section: store.role.profile.landing) }
 
     private func openTicket(_ ticket: Ticket) {
         planTicketID = nil
@@ -195,6 +211,9 @@ struct RootView: View {
             }
         }
         .onChange(of: selection) { planTicketID = nil }
+        .onChange(of: store.role) {
+            if let selection, !visibleItems.contains(selection) { self.selection = nil }
+        }
         .onChange(of: store.activeWorkspace) {
             filter.repo = nil
             todayFilter.repo = nil
@@ -214,8 +233,8 @@ struct RootView: View {
             .padding(.horizontal, 10)
             .padding(.top, 8)
             .padding(.bottom, 10)
-            ForEach(SidebarItem.allCases) { item in
-                SidebarRow(item: item, selected: (selection ?? .today) == item, badge: badge(for: item), badgeAlert: item == .actionLog) { selection = item }
+            ForEach(visibleItems) { item in
+                SidebarRow(item: item, selected: currentItem == item, badge: badge(for: item), badgeAlert: item == .actionLog) { selection = item }
             }
             Spacer()
             SyncStatusView().padding(.bottom, 12)
@@ -249,7 +268,7 @@ struct RootView: View {
 
     @ViewBuilder
     private var sidebarContent: some View {
-        switch selection ?? .today {
+        switch currentItem {
         case .today:
             TodayView(selectedTicketID: $selectedTicketID, filter: $todayFilter)
                 .task(id: store.hasCurrentSprint) { applyDefaultTodaySprint() }

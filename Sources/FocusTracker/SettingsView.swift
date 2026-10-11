@@ -29,6 +29,11 @@ struct SettingsView: View {
             }
 
             Section("GitHub") {
+                Picker("Role", selection: Binding(get: { store.role }, set: { store.role = $0 })) {
+                    ForEach(UserRole.allCases) { Text($0.title).tag($0) }
+                }
+                Text("Sets which tabs, status order and defaults the app shows. Change it any time.")
+                    .font(.caption).foregroundStyle(.secondary)
                 SecureField("Personal access token", text: $token)
                 HStack {
                     Button("Save & Sync") { Task { await saveToken() } }

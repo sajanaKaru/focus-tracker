@@ -247,15 +247,17 @@ public struct TicketFilter: Equatable, Sendable {
     public var repo: String?
     public var milestone: MilestoneChoice = .any
     public var sprint: SprintChoice = .any
+    public var environment: DeploymentEnvironment?
 
-    public init(source: Source = .all, repo: String? = nil, milestone: MilestoneChoice = .any, sprint: SprintChoice = .any) {
+    public init(source: Source = .all, repo: String? = nil, milestone: MilestoneChoice = .any, sprint: SprintChoice = .any, environment: DeploymentEnvironment? = nil) {
         self.source = source
         self.repo = repo
         self.milestone = milestone
         self.sprint = sprint
+        self.environment = environment
     }
 
-    public var isActive: Bool { source != .all || repo != nil || milestone != .any || sprint != .any }
+    public var isActive: Bool { source != .all || repo != nil || milestone != .any || sprint != .any || environment != nil }
 
     public func matches(_ ticket: Ticket, now: Date = Date()) -> Bool {
         switch source {
@@ -278,6 +280,7 @@ public struct TicketFilter: Equatable, Sendable {
         case .none: if !ticket.sprints.isEmpty { return false }
         case .named(let name): if !ticket.sprints.contains(where: { $0.value == name }) { return false }
         }
+        if let environment, ticket.environment != environment { return false }
         return true
     }
 }
