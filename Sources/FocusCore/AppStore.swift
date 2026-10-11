@@ -48,6 +48,8 @@ public final class AppStore {
     public private(set) var planComments: [PlanComment] = []
     public private(set) var activities: [Activity] = []
     public private(set) var dayPlans: [DayPlan] = []
+    /// Kept apart from `dayPlans` so a QA plan and a Dev plan for the same day never mix.
+    public internal(set) var qaDayPlans: [DayPlan] = []
     public private(set) var actionLog: [ActionLogEntry] = []
     public internal(set) var testCases: [TestCase] = []
     public internal(set) var testResults: [TestResult] = []
@@ -803,10 +805,16 @@ public final class AppStore {
             return
         }
         syncState = .syncing
+        let fetchedTeamIssues = syncsTeamIssues
         do {
             let includePRs = defaults.bool(forKey: PrefKey.includePRs)
             let client = GitHubClient(token: token, transport: transport)
-            let remote = try await client.fetchAssignedIssues(repos: configuredRepos, includePullRequests: includePRs)
+            let remote: [RemoteIssue]
+            if fetchedTeamIssues {
+                remote = try await client.fetchOpenIssues(repos: configuredRepos.sorted(), includePullRequests: includePRs)
+            } else {
+                remote = try await client.fetchAssignedIssues(repos: configuredRepos, includePullRequests: includePRs)
+            }
             var enriched = await withProjectFields(remote, client: client)
             let issueFields = await client.fetchIssueFields(for: enriched)
             for i in enriched.indices {
@@ -821,6 +829,8 @@ public final class AppStore {
         }
         if case .succeeded = syncState { await loadOptions() }
         await refreshPullRequests()
+        // The role changed mid-sync, so the results are for the old scope; this only repeats if it changes again.
+        if syncsTeamIssues != fetchedTeamIssues { await syncGitHub() }
     }
 
     /// Lowercased "owner/name" entries from Settings; empty means every repo.
@@ -830,6 +840,15 @@ public final class AppStore {
                 .split(whereSeparator: { $0 == "," || $0.isWhitespace })
                 .map { $0.lowercased() }
         )
+    }
+
+    /// PM sees every open issue in the configured repos; other roles, and PM without repos, sync issues assigned to the user.
+    public var syncsTeamIssues: Bool { role == .pm && !configuredRepos.isEmpty }
+
+    /// Switching into or out of PM changes which issues are fetched, so refresh once.
+    public func roleDidChange(from old: UserRole) async {
+        guard (old == .pm) != (role == .pm), tokenProvider() != nil else { return }
+        await syncGitHub()
     }
 
     // MARK: - My pull requests
@@ -965,6 +984,8 @@ public final class AppStore {
         if !keep.contains("Milestone") { ticket.milestone = issue.milestone }
         if let fields = issue.fields { ticket.fields = preserving(fields, keeping: keep, from: local.fields) }
         ticket.issueType = issue.issueType
+        ticket.assignees = issue.assignees
+        ticket.remoteUpdatedAt = issue.updatedAt
         if let fields = issue.issueFields { ticket.issueFields = preserving(fields, keeping: keep, from: local.issueFields) }
         deriveFromFields(&ticket, keep: keep)
     }
@@ -1021,7 +1042,9 @@ public final class AppStore {
                     issueFields: issue.issueFields,
                     createdAt: now,
                     updatedAt: now,
-                    github: GitHubRef(repo: issue.repo, number: issue.number, url: issue.url, isPullRequest: issue.isPullRequest)
+                    github: GitHubRef(repo: issue.repo, number: issue.number, url: issue.url, isPullRequest: issue.isPullRequest),
+                    assignees: issue.assignees,
+                    remoteUpdatedAt: issue.updatedAt
                 )
                 deriveFromFields(&created, keep: [])
                 result.append(created)
@@ -1401,6 +1424,7 @@ public final class AppStore {
         var testResults: [TestResult]?
         var testVerdicts: [TestVerdict]?
         var bugReports: [BugReport]?
+        var qaDayPlans: [DayPlan]?
     }
 
     /// Older files stored one free-text `notes` string per ticket.
@@ -1430,6 +1454,7 @@ public final class AppStore {
             testResults = snapshot.testResults ?? []
             testVerdicts = snapshot.testVerdicts ?? []
             bugReports = snapshot.bugReports ?? []
+            qaDayPlans = snapshot.qaDayPlans ?? []
             if let saved = snapshot.notes {
                 notes = saved
             } else if let legacy = try? decoder.decode(LegacySnapshot.self, from: data) {
@@ -1452,7 +1477,7 @@ public final class AppStore {
             let snapshot = Snapshot(
                 tickets: tickets, entries: entries, notes: notes, planComments: planComments, activities: activities, dayPlans: dayPlans,
                 actionLog: actionLog, remoteOptions: remoteOptions, testCases: testCases, testResults: testResults,
-                testVerdicts: testVerdicts, bugReports: bugReports
+                testVerdicts: testVerdicts, bugReports: bugReports, qaDayPlans: qaDayPlans
             )
             let data = try encoder.encode(snapshot)
             try data.write(to: storeURL, options: .atomic)

@@ -55,7 +55,7 @@ All queries are on `AppStore` in `AppStore+QADashboard.swift` and use `workspace
 ### QA test plan
 
 - Candidates: tickets from the Alpha, Alpha2, Beta and all-environment queues in `ready`, `testing` or `failed`, de-duplicated, not live. Order: failed, testing, ready, then most recently updated.
-- Estimate per ticket: 10 minutes per case without a passing result (not run, failed or blocked), at least 10 minutes; 30 minutes when the ticket has no cases. Both are named constants in one place.
+- Estimate per ticket: 10 minutes per case that is not run, failed or blocked (skipped and passing cases do not count), at least 10 minutes; 30 minutes when the ticket has no cases. Both are named constants in one place.
 - Capacity: existing `capacity(for:calendarBusy:)` (working hours, focus factor, calendar and logged activities).
 - Plan storage: a separate `qaDayPlans: [DayPlan]` list in the store file, optional on decode. A separate list keeps QA and Dev plans for the same day from mixing when the role is switched.
 - Operations mirror Dev's, today only: suggest (greedy by order until capacity is full, always keeps the first), toggle a ticket, planned versus capacity bar. No carry-over ranking and no deferral.

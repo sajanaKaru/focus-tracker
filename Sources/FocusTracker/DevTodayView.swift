@@ -1,0 +1,227 @@
+import AppKit
+import FocusCore
+import SwiftUI
+
+struct DevTodayView: View {
+    @Environment(AppStore.self) private var store
+    @Binding var selectedTicketID: UUID?
+    @Binding var filter: TicketFilter
+    @State private var sheet: TodaySheet?
+    /// nil follows the current day, including across midnight.
+    @State private var chosenDay: Date?
+    @State private var copied = false
+    @State private var showDatePicker = false
+
+    private var day: Date { chosenDay ?? store.now }
+    private var isToday: Bool { Calendar.current.isDate(day, inSameDayAs: store.now) }
+    private var isFuture: Bool { Calendar.current.startOfDay(for: day) > Calendar.current.startOfDay(for: store.now) }
+    private var todayRange: DateInterval { store.dayRange(for: day) }
+
+    private var dayBinding: Binding<Date> {
+        Binding(
+            get: { day },
+            set: { newValue in
+                chosenDay = Calendar.current.isDate(newValue, inSameDayAs: store.now) ? nil : newValue
+                showDatePicker = false
+            }
+        )
+    }
+
+    /// Steps over days off, but stops on a day that has tracked time so worked weekends stay reachable.
+    private func shiftDay(_ offset: Int) {
+        let calendar = Calendar.current
+        var shifted = day
+        for _ in 0..<7 {
+            guard let next = calendar.date(byAdding: .day, value: offset, to: shifted) else { return }
+            shifted = next
+            if store.planSettings.isWorkingDay(shifted) || store.trackedTime(in: store.dayRange(for: shifted)) > 0 { break }
+        }
+        dayBinding.wrappedValue = shifted
+    }
+
+    private func copySummary() {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(store.daySummaryText(for: day, includeDate: true, includeTomorrow: isToday), forType: .string)
+        NSPasteboard.general.setString(store.daySummaryHTML(for: day, includeDate: true, includeTomorrow: isToday), forType: .html)
+        copied = true
+        Task {
+            try? await Task.sleep(for: .seconds(2))
+            copied = false
+        }
+    }
+
+    private var dayLabel: String {
+        if isToday { return "Today" }
+        if Calendar.current.isDateInYesterday(day) { return "Yesterday" }
+        if Calendar.current.isDateInTomorrow(day) { return "Tomorrow" }
+        return day.formatted(.dateTime.weekday(.abbreviated).day().month(.abbreviated))
+    }
+
+    private var dayNavigator: some View {
+        HStack(spacing: 6) {
+            HStack(spacing: 0) {
+                Button { shiftDay(-1) } label: {
+                    Image(systemName: "chevron.left").frame(width: 28, height: 28).contentShape(Rectangle())
+                }
+                .help("Previous day (⌘[)")
+                .keyboardShortcut("[", modifiers: .command)
+
+                Divider().frame(height: 16)
+
+                Button { showDatePicker.toggle() } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "calendar")
+                        Text(dayLabel).fontWeight(.medium)
+                    }
+                    .frame(minWidth: 120, minHeight: 28)
+                    .contentShape(Rectangle())
+                }
+                .help("Pick a day")
+                .popover(isPresented: $showDatePicker, arrowEdge: .bottom) {
+                    DatePicker("Day", selection: dayBinding, displayedComponents: .date)
+                        .datePickerStyle(.graphical)
+                        .labelsHidden()
+                        .padding(12)
+                }
+
+                Divider().frame(height: 16)
+
+                Button { shiftDay(1) } label: {
+                    Image(systemName: "chevron.right").frame(width: 28, height: 28).contentShape(Rectangle())
+                }
+                .help("Next day (⌘])")
+                .keyboardShortcut("]", modifiers: .command)
+            }
+            .buttonStyle(.plain)
+            .background(Theme.cardBackground, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(Color.primary.opacity(0.12)))
+
+            Button("Today") { chosenDay = nil }
+                .buttonStyle(.secondary)
+                .controlSize(.large)
+                .disabled(isToday)
+                .help("Jump back to today")
+        }
+    }
+
+    private var greeting: String {
+        switch Calendar.current.component(.hour, from: store.now) {
+        case 5..<12: "Good morning"
+        case 12..<18: "Good afternoon"
+        default: "Good evening"
+        }
+    }
+
+    var body: some View {
+        let range = todayRange
+        let inProgress = store.workspaceTickets.filter { $0.status.isInFlight }
+        let active = inProgress.filter { filter.matches($0, now: store.now) }
+        // A running timer goes first; the sort is stable so the rest keep their order.
+        let inDev = active.filter { $0.status == .inProgress }.sorted { store.isTracking($0.id) && !store.isTracking($1.id) }
+        let inReview = active.filter { $0.status == .inReview }
+        let inTesting = active.filter { $0.status == .testing }
+
+        ScrollView {
+            VStack(alignment: .leading, spacing: 24) {
+                HStack(alignment: .top) {
+                    PageHeader(
+                        title: isToday ? greeting : day.formatted(.dateTime.weekday(.wide).day().month(.wide)),
+                        subtitle: day.formatted(date: .complete, time: .omitted)
+                    )
+                    Spacer()
+                    if isToday {
+                        HStack(spacing: 10) {
+                            Button { sheet = .unplanned } label: { Label("Unplanned", systemImage: "bolt.fill") }
+                                .buttonStyle(.secondary)
+                                .controlSize(.large)
+                                .help("Log a bug or request that wasn't planned and start its timer")
+                            AddToTodayMenu(sheet: $sheet)
+                        }
+                    }
+                }
+
+                SyncIssuesCard(selectedTicketID: $selectedTicketID)
+
+                HStack(spacing: 10) {
+                    dayNavigator
+                    Spacer()
+                    Button(action: copySummary) {
+                        Label(
+                            copied ? "Copied" : (isToday ? "Copy today's summary" : "Copy summary"),
+                            systemImage: copied ? "checkmark" : "doc.on.clipboard"
+                        )
+                    }
+                    .controlSize(.large)
+                    .buttonStyle(.secondary)
+                    .help("Copy the summary for the selected day")
+                    .disabled(isFuture)
+                }
+
+                if !isFuture {
+                    HStack(spacing: 14) {
+                        StatCard(title: isToday ? "Tracked today" : "Tracked", value: Format.short(store.trackedTime(in: range)), symbol: "timer", tint: Theme.accent)
+                        StatCard(title: "Active tickets", value: "\(active.count)", symbol: "bolt.fill", tint: Theme.warning)
+                        StatCard(title: "Calls & meetings", value: Format.short(store.activityTime(in: range)), symbol: "phone.fill", tint: Theme.accentEnd)
+                    }
+                }
+
+                if isToday || isFuture { DayPlanCard(selectedTicketID: $selectedTicketID, day: day) }
+
+                if isToday {
+                    FilterBar(filter: $filter, showsCount: false, horizontalPadding: 0)
+
+                    VStack(alignment: .leading, spacing: 10) {
+                        SectionTitle(title: "In dev", count: inDev.count)
+                        if inDev.isEmpty {
+                            if inProgress.isEmpty {
+                                EmptyHint(text: "Nothing in dev. Start a timer from Tickets.", symbol: "moon.zzz")
+                            } else if active.isEmpty {
+                                EmptyHint(text: "\(inProgress.count) in dev, code review or testing, but none match these filters.", symbol: "line.3.horizontal.decrease.circle")
+                            } else {
+                                EmptyHint(text: "Nothing in dev right now.", symbol: "moon.zzz")
+                            }
+                        }
+                        ticketCards(inDev)
+                    }
+
+                    if !inReview.isEmpty {
+                        VStack(alignment: .leading, spacing: 10) {
+                            SectionTitle(title: "Code review", count: inReview.count)
+                            ticketCards(inReview)
+                        }
+                    }
+
+                    if !inTesting.isEmpty {
+                        VStack(alignment: .leading, spacing: 10) {
+                            SectionTitle(title: "Testing", count: inTesting.count)
+                            ticketCards(inTesting)
+                        }
+                    }
+                }
+
+                if !isFuture { DayTimeLogSection(day: day, isToday: isToday) }
+            }
+            .padding(24)
+            .frame(maxWidth: 900, alignment: .leading)
+            .frame(maxWidth: .infinity)
+        }
+        .background(Theme.pageBackground)
+        .sheet(item: $sheet) { sheet in
+            switch sheet {
+            case .add(let choice): AddActivitySheet(choice: choice)
+            case .calendar: CalendarImportSheet()
+            case .unplanned: QuickCaptureSheet()
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func ticketCards(_ tickets: [Ticket]) -> some View {
+        ForEach(tickets) { ticket in
+            TicketRow(ticket: ticket)
+                .cardStyle(padding: 10, selected: selectedTicketID == ticket.id)
+                .hoverLift()
+                .onTapGesture { selectedTicketID = ticket.id }
+        }
+    }
+}

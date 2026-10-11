@@ -217,8 +217,9 @@ struct RootView: View {
             }
         }
         .onChange(of: selection) { planTicketID = nil }
-        .onChange(of: store.role) {
+        .onChange(of: store.role) { old, _ in
             if let selection, !visibleItems.contains(selection) { self.selection = nil }
+            Task { await store.roleDidChange(from: old) }
         }
         .onChange(of: store.activeWorkspace) {
             filter.repo = nil
