@@ -17,26 +17,110 @@ extension Color {
 
 struct PrimaryButtonStyle: ButtonStyle {
     var gradient = Theme.accentGradient
+    @Environment(\.controlSize) var controlSize
+    @Environment(\.isEnabled) var isEnabled
 
     func makeBody(configuration: Configuration) -> some View {
+        let large = controlSize == .large
         configuration.label
-            .font(.callout.weight(.semibold))
+            .font((large ? Font.body : Font.callout).weight(.semibold))
             .foregroundStyle(.white)
-            .padding(.horizontal, 14)
-            .padding(.vertical, 7)
+            .padding(.horizontal, large ? 22 : 14)
+            .padding(.vertical, large ? 10 : 7)
             .background(gradient, in: Capsule())
-            .opacity(configuration.isPressed ? 0.85 : 1)
+            .opacity(isEnabled ? (configuration.isPressed ? 0.85 : 1) : 0.4)
             .scaleEffect(configuration.isPressed ? 0.98 : 1)
     }
 }
 
 struct SecondaryButtonStyle: ButtonStyle {
+    @Environment(\.controlSize) var controlSize
+    @Environment(\.isEnabled) var isEnabled
+
     func makeBody(configuration: Configuration) -> some View {
+        let large = controlSize == .large
         configuration.label
-            .font(.callout.weight(.medium))
-            .padding(.horizontal, 12)
-            .padding(.vertical, 6)
+            .font((large ? Font.body : Font.callout).weight(.medium))
+            .padding(.horizontal, large ? 20 : 12)
+            .padding(.vertical, large ? 10 : 6)
             .background(Color.primary.opacity(configuration.isPressed ? 0.12 : 0.06), in: Capsule())
+            .opacity(isEnabled ? 1 : 0.4)
+    }
+}
+
+/// Standard modal: title, scrolling form body, and a footer with the actions.
+struct SheetScaffold<Content: View, Footer: View>: View {
+    let title: String
+    var subtitle: String?
+    var width: CGFloat = 560
+    var height: CGFloat?
+    @ViewBuilder var content: Content
+    @ViewBuilder var footer: Footer
+
+    var body: some View {
+        VStack(spacing: 0) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title).font(.title.weight(.bold))
+                if let subtitle { Text(subtitle).font(.callout).foregroundStyle(.secondary) }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 28)
+            .padding(.top, 24)
+            .padding(.bottom, 8)
+
+            content
+
+            Divider()
+            HStack(spacing: 12) {
+                Spacer()
+                footer
+            }
+            .padding(.horizontal, 28)
+            .padding(.vertical, 16)
+        }
+        .formStyle(.grouped)
+        .controlSize(.large)
+        .frame(width: width, height: height)
+    }
+}
+
+/// Date field that opens a full calendar popover; replaces the tiny stock picker.
+struct AppDatePicker: View {
+    var label: String?
+    @Binding var selection: Date
+    var upTo: Date?
+    var includesTime = false
+    @State private var showing = false
+
+    var body: some View {
+        if let label {
+            LabeledContent(label) { field }
+        } else {
+            field
+        }
+    }
+
+    private var field: some View {
+        Button { showing.toggle() } label: {
+            HStack(spacing: 8) {
+                Image(systemName: "calendar").foregroundStyle(Theme.accent)
+                Text(includesTime ? selection.formatted(date: .abbreviated, time: .shortened) : selection.formatted(date: .abbreviated, time: .omitted))
+                    .monospacedDigit()
+                Image(systemName: "chevron.up.chevron.down").font(.caption2).foregroundStyle(.secondary)
+            }
+            .font(.body)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 7)
+            .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .popover(isPresented: $showing, arrowEdge: .bottom) {
+            DatePicker("", selection: $selection, in: Date.distantPast...(upTo ?? .distantFuture), displayedComponents: includesTime ? [.date, .hourAndMinute] : .date)
+                .datePickerStyle(.graphical)
+                .labelsHidden()
+                .padding(16)
+        }
     }
 }
 

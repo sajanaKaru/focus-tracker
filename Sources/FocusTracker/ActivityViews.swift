@@ -79,43 +79,39 @@ struct AddActivitySheet: View {
     private var canAdd: Bool { !isTicket || ticketID != nil }
 
     var body: some View {
-        Form {
-            Section { Text("Add to today").font(.title2.weight(.bold)) }
-
-            Picker("Type", selection: $choice) {
-                ForEach(Choice.allCases) { Text($0.title).tag($0) }
-            }
-            .pickerStyle(.segmented)
-
-            if isTicket {
-                Picker("Ticket", selection: $ticketID) {
-                    Text("Choose…").tag(UUID?.none)
-                    ForEach(store.tickets.filter { $0.status != .done }.sorted { $0.updatedAt > $1.updatedAt }) { ticket in
-                        Text("\(ticket.displayKey)  \(ticket.title)").tag(UUID?.some(ticket.id))
-                    }
+        SheetScaffold(title: "Add to today") {
+            Form {
+                Picker("Type", selection: $choice) {
+                    ForEach(Choice.allCases) { Text($0.title).tag($0) }
                 }
-            } else {
-                TextField("Title", text: $title, prompt: Text("e.g. Sprint planning"))
-                Toggle("Start a live timer now", isOn: $startNow)
-            }
+                .pickerStyle(.segmented)
 
-            if isTicket || !startNow {
-                DatePicker("Started", selection: $start, in: ...Date(), displayedComponents: [.date, .hourAndMinute])
-                Stepper("Duration: \(Format.short(TimeInterval(minutes * 60)))", value: $minutes, in: 5...720, step: 5)
-            }
+                if isTicket {
+                    Picker("Ticket", selection: $ticketID) {
+                        Text("Choose…").tag(UUID?.none)
+                        ForEach(store.tickets.filter { $0.status != .done }.sorted { $0.updatedAt > $1.updatedAt }) { ticket in
+                            Text("\(ticket.displayKey)  \(ticket.title)").tag(UUID?.some(ticket.id))
+                        }
+                    }
+                } else {
+                    TextField("Title", text: $title, prompt: Text("e.g. Sprint planning"))
+                    Toggle("Start a live timer now", isOn: $startNow)
+                }
 
-            HStack {
-                Spacer()
-                Button(role: .cancel) { dismiss() } label: { ShortcutLabel(title: "Cancel", keys: "⎋") }
-                    .keyboardShortcut(.cancelAction)
-                Button(action: add) { ShortcutLabel(title: startNow && !isTicket ? "Start" : "Add", keys: "↩") }
-                    .keyboardShortcut(.defaultAction)
-                    .disabled(!canAdd)
+                if isTicket || !startNow {
+                    AppDatePicker(label: "Started", selection: $start, upTo: Date(), includesTime: true)
+                    Stepper("Duration: \(Format.short(TimeInterval(minutes * 60)))", value: $minutes, in: 5...720, step: 5)
+                }
             }
+        } footer: {
+            Button(role: .cancel) { dismiss() } label: { ShortcutLabel(title: "Cancel", keys: "⎋") }
+                .buttonStyle(.secondary)
+                .keyboardShortcut(.cancelAction)
+            Button(action: add) { ShortcutLabel(title: startNow && !isTicket ? "Start" : "Add", keys: "↩") }
+                .buttonStyle(.primary)
+                .keyboardShortcut(.defaultAction)
+                .disabled(!canAdd)
         }
-        .formStyle(.grouped)
-        .frame(width: 440)
-        .padding()
     }
 
     private func add() {
@@ -148,24 +144,19 @@ struct CalendarImportSheet: View {
     @State private var kinds: [String: Activity.Kind] = [:]
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text("Import from Calendar").font(.title2.weight(.bold))
-            Text("Today's events that have already started. Pick the ones to add to your time log.")
-                .font(.callout).foregroundStyle(.secondary)
-
+        SheetScaffold(title: "Import from Calendar", subtitle: "Today's events that have already started. Pick the ones to add to your time log.", width: 640, height: 560) {
             content
-
-            HStack {
-                Spacer()
-                Button(role: .cancel) { dismiss() } label: { ShortcutLabel(title: "Cancel", keys: "⎋") }
-                    .keyboardShortcut(.cancelAction)
-                Button(action: addSelected) { ShortcutLabel(title: "Add \(selected.count) selected", keys: "↩") }
-                    .keyboardShortcut(.defaultAction)
-                    .disabled(selected.isEmpty)
-            }
+                .padding(.horizontal, 20)
+                .padding(.vertical, 8)
+        } footer: {
+            Button(role: .cancel) { dismiss() } label: { ShortcutLabel(title: "Cancel", keys: "⎋") }
+                .buttonStyle(.secondary)
+                .keyboardShortcut(.cancelAction)
+            Button(action: addSelected) { ShortcutLabel(title: "Add \(selected.count) selected", keys: "↩") }
+                .buttonStyle(.primary)
+                .keyboardShortcut(.defaultAction)
+                .disabled(selected.isEmpty)
         }
-        .padding(20)
-        .frame(width: 520, height: 460)
         .task { await load() }
     }
 
@@ -298,37 +289,33 @@ struct EditLogSheet: View {
     private var isValid: Bool { start < (isRunning ? Date() : end) }
 
     var body: some View {
-        Form {
-            Section { Text(isActivity ? "Edit activity" : "Edit time entry").font(.title2.weight(.bold)) }
-
-            if isActivity {
-                Picker("Type", selection: $kind) {
-                    ForEach(Activity.Kind.allCases) { Text($0.title).tag($0) }
+        SheetScaffold(title: isActivity ? "Edit activity" : "Edit time entry") {
+            Form {
+                if isActivity {
+                    Picker("Type", selection: $kind) {
+                        ForEach(Activity.Kind.allCases) { Text($0.title).tag($0) }
+                    }
+                    TextField("Title", text: $title)
                 }
-                TextField("Title", text: $title)
-            }
 
-            DatePicker("Started", selection: $start, in: ...Date(), displayedComponents: [.date, .hourAndMinute])
-            if isRunning {
-                Text("Still running").foregroundStyle(.secondary)
-            } else {
-                DatePicker("Ended", selection: $end, in: ...Date(), displayedComponents: [.date, .hourAndMinute])
-                Text("Duration: \(Format.short(max(0, end.timeIntervalSince(start))))")
-                    .foregroundStyle(isValid ? Color.secondary : Theme.danger)
+                AppDatePicker(label: "Started", selection: $start, upTo: Date(), includesTime: true)
+                if isRunning {
+                    Text("Still running").foregroundStyle(.secondary)
+                } else {
+                    AppDatePicker(label: "Ended", selection: $end, upTo: Date(), includesTime: true)
+                    Text("Duration: \(Format.short(max(0, end.timeIntervalSince(start))))")
+                        .foregroundStyle(isValid ? Color.secondary : Theme.danger)
+                }
             }
-
-            HStack {
-                Spacer()
-                Button(role: .cancel) { dismiss() } label: { ShortcutLabel(title: "Cancel", keys: "⎋") }
-                    .keyboardShortcut(.cancelAction)
-                Button(action: save) { ShortcutLabel(title: "Save", keys: "↩") }
-                    .keyboardShortcut(.defaultAction)
-                    .disabled(!isValid)
-            }
+        } footer: {
+            Button(role: .cancel) { dismiss() } label: { ShortcutLabel(title: "Cancel", keys: "⎋") }
+                .buttonStyle(.secondary)
+                .keyboardShortcut(.cancelAction)
+            Button(action: save) { ShortcutLabel(title: "Save", keys: "↩") }
+                .buttonStyle(.primary)
+                .keyboardShortcut(.defaultAction)
+                .disabled(!isValid)
         }
-        .formStyle(.grouped)
-        .frame(width: 440)
-        .padding()
         .onAppear(perform: load)
     }
 

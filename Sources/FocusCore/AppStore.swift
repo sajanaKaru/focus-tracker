@@ -798,6 +798,13 @@ public final class AppStore {
         autoSyncTask = nil
     }
 
+    /// Re-arms the timer so a changed interval applies now instead of after the current wait.
+    public func restartAutoSync() {
+        guard autoSyncTask != nil else { return }
+        stopAutoSync()
+        startAutoSync()
+    }
+
     public func syncGitHub() async {
         guard syncState != .syncing else { return }
         guard let token = tokenProvider(), !token.isEmpty else {

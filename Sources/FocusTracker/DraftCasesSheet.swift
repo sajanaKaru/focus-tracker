@@ -16,22 +16,21 @@ struct DraftCasesSheet: View {
     @State private var error: String?
 
     var body: some View {
-        Form {
-            Section { Text("Draft test cases").font(.title2.weight(.bold)) }
-            switch phase {
-            case .loadingPRs:
-                HStack { ProgressView().controlSize(.small); Text("Looking for linked pull requests…") }
-            case .choosing: choosing
-            case .generating:
-                HStack { ProgressView().controlSize(.small); Text("Asking \(store.aiProvider.title)…") }
-            case .review: review
+        SheetScaffold(title: "Draft test cases", subtitle: ticket.displayKey + " · " + ticket.title, width: 720, height: 600) {
+            Form {
+                switch phase {
+                case .loadingPRs:
+                    HStack { ProgressView().controlSize(.small); Text("Looking for linked pull requests…") }
+                case .choosing: choosing
+                case .generating:
+                    HStack { ProgressView().controlSize(.small); Text("Asking \(store.aiProvider.title)…") }
+                case .review: review
+                }
+                if let error { Text(error).font(.callout).foregroundStyle(.red) }
             }
-            if let error { Text(error).font(.callout).foregroundStyle(.red) }
+        } footer: {
             actions
         }
-        .formStyle(.grouped)
-        .frame(width: 520)
-        .padding()
         .task { await loadPullRequests() }
     }
 
@@ -71,22 +70,22 @@ struct DraftCasesSheet: View {
         }
     }
 
-    private var actions: some View {
-        HStack {
-            Spacer()
-            Button(role: .cancel) { dismiss() } label: { ShortcutLabel(title: "Cancel", keys: "⎋") }
-                .keyboardShortcut(.cancelAction)
-            switch phase {
-            case .choosing:
-                Button { Task { await generate() } } label: { ShortcutLabel(title: error == nil ? "Draft" : "Retry", keys: "↩") }
-                    .keyboardShortcut(.defaultAction)
-            case .review:
-                Button(action: add) { ShortcutLabel(title: "Add \(kept.count) selected", keys: "↩") }
-                    .keyboardShortcut(.defaultAction)
-                    .disabled(kept.isEmpty)
-            case .loadingPRs, .generating:
-                EmptyView()
-            }
+    @ViewBuilder private var actions: some View {
+        Button(role: .cancel) { dismiss() } label: { ShortcutLabel(title: "Cancel", keys: "⎋") }
+            .buttonStyle(.secondary)
+            .keyboardShortcut(.cancelAction)
+        switch phase {
+        case .choosing:
+            Button { Task { await generate() } } label: { ShortcutLabel(title: error == nil ? "Draft" : "Retry", keys: "↩") }
+                .buttonStyle(.primary)
+                .keyboardShortcut(.defaultAction)
+        case .review:
+            Button(action: add) { ShortcutLabel(title: "Add \(kept.count) selected", keys: "↩") }
+                .buttonStyle(.primary)
+                .keyboardShortcut(.defaultAction)
+                .disabled(kept.isEmpty)
+        case .loadingPRs, .generating:
+            EmptyView()
         }
     }
 

@@ -129,9 +129,11 @@ struct ActionDetailSheet: View {
                     Text(entry.kind.title).font(.title3.weight(.semibold))
                     SyncBadge(sync: entry.sync)
                     Spacer()
-                    Button("Close") { dismiss() }.keyboardShortcut(.cancelAction)
+                    Button(action: { dismiss() }) { ShortcutLabel(title: "Close", keys: "⎋") }
+                        .buttonStyle(.secondary)
+                        .keyboardShortcut(.cancelAction)
                 }
-                .padding(16)
+                .padding(20)
                 Divider()
                 Form {
                     Section("Action") {
@@ -198,7 +200,8 @@ struct ActionDetailSheet: View {
                 }
                 .formStyle(.grouped)
             }
-            .frame(width: 560, height: 520)
+            .controlSize(.large)
+            .frame(width: 680, height: 600)
         } else {
             ContentUnavailableView("Entry not found", systemImage: "questionmark.circle").frame(width: 360, height: 200)
         }

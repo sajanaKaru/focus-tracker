@@ -171,26 +171,24 @@ struct TestCaseSheet: View {
     @State private var expected = ""
 
     var body: some View {
-        Form {
-            Section { Text(existing == nil ? "New test case" : "Edit test case").font(.title2.weight(.bold)) }
-            TextField("Title", text: $title, prompt: Text("e.g. User can sign in"))
-            VStack(alignment: .leading) {
-                Text("Steps").font(.caption).foregroundStyle(.secondary)
-                TextEditor(text: $steps).frame(height: 80)
+        SheetScaffold(title: existing == nil ? "New test case" : "Edit test case", width: 600) {
+            Form {
+                TextField("Title", text: $title, prompt: Text("e.g. User can sign in"))
+                VStack(alignment: .leading) {
+                    Text("Steps").font(.caption).foregroundStyle(.secondary)
+                    TextEditor(text: $steps).frame(height: 140)
+                }
+                TextField("Expected result", text: $expected)
             }
-            TextField("Expected result", text: $expected)
-            HStack {
-                Spacer()
-                Button(role: .cancel) { dismiss() } label: { ShortcutLabel(title: "Cancel", keys: "⎋") }
-                    .keyboardShortcut(.cancelAction)
-                Button(action: save) { ShortcutLabel(title: "Save", keys: "↩") }
-                    .keyboardShortcut(.defaultAction)
-                    .disabled(title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-            }
+        } footer: {
+            Button(role: .cancel) { dismiss() } label: { ShortcutLabel(title: "Cancel", keys: "⎋") }
+                .buttonStyle(.secondary)
+                .keyboardShortcut(.cancelAction)
+            Button(action: save) { ShortcutLabel(title: "Save", keys: "↩") }
+                .buttonStyle(.primary)
+                .keyboardShortcut(.defaultAction)
+                .disabled(title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
         }
-        .formStyle(.grouped)
-        .frame(width: 460)
-        .padding()
         .onAppear {
             guard let existing else { return }
             title = existing.title
@@ -227,31 +225,29 @@ struct VerdictSheet: View {
     }
 
     var body: some View {
-        Form {
-            Section { Text("Mark \(outcome.title.lowercased())\(environment.map { " on \($0.title)" } ?? "")").font(.title2.weight(.bold)) }
-            TextField("Build / version", text: $build, prompt: Text("optional"))
-            if outcome == .fail {
-                Toggle("Move the ticket back to In Progress", isOn: $returnToInProgress)
+        SheetScaffold(title: "Mark \(outcome.title.lowercased())\(environment.map { " on \($0.title)" } ?? "")", width: 640) {
+            Form {
+                TextField("Build / version", text: $build, prompt: Text("optional"))
+                if outcome == .fail {
+                    Toggle("Move the ticket back to In Progress", isOn: $returnToInProgress)
+                }
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Comment posted to \(ticket.displayKey)").font(.caption).foregroundStyle(.secondary)
+                    ScrollView { Text(preview).font(.system(.caption, design: .monospaced)).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading) }
+                        .frame(height: 200)
+                        .padding(8)
+                        .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 8))
+                    Text("Also sets the label \(QA.label(environment: environment, outcome: outcome)).").font(.caption).foregroundStyle(.secondary)
+                }
             }
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Comment posted to \(ticket.displayKey)").font(.caption).foregroundStyle(.secondary)
-                ScrollView { Text(preview).font(.system(.caption, design: .monospaced)).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading) }
-                    .frame(height: 150)
-                    .padding(8)
-                    .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 8))
-                Text("Also sets the label \(QA.label(environment: environment, outcome: outcome)).").font(.caption).foregroundStyle(.secondary)
-            }
-            HStack {
-                Spacer()
-                Button(role: .cancel) { dismiss() } label: { ShortcutLabel(title: "Cancel", keys: "⎋") }
-                    .keyboardShortcut(.cancelAction)
-                Button(action: post) { ShortcutLabel(title: "Post", keys: "↩") }
-                    .keyboardShortcut(.defaultAction)
-            }
+        } footer: {
+            Button(role: .cancel) { dismiss() } label: { ShortcutLabel(title: "Cancel", keys: "⎋") }
+                .buttonStyle(.secondary)
+                .keyboardShortcut(.cancelAction)
+            Button(action: post) { ShortcutLabel(title: "Post", keys: "↩") }
+                .buttonStyle(.primary)
+                .keyboardShortcut(.defaultAction)
         }
-        .formStyle(.grouped)
-        .frame(width: 520)
-        .padding()
     }
 
     private func post() {
@@ -276,35 +272,33 @@ struct BugSheet: View {
     @State private var busy = false
 
     var body: some View {
-        Form {
-            Section { Text("Report a bug").font(.title2.weight(.bold)) }
-            TextField("Title", text: $title, prompt: Text("e.g. Save crashes with empty name"))
-            Picker("Severity", selection: $severity) {
-                ForEach(BugSeverity.allCases) { Text($0.title).tag($0) }
+        SheetScaffold(title: "Report a bug", width: 680) {
+            Form {
+                TextField("Title", text: $title, prompt: Text("e.g. Save crashes with empty name"))
+                Picker("Severity", selection: $severity) {
+                    ForEach(BugSeverity.allCases) { Text($0.title).tag($0) }
+                }
+                Picker("Environment", selection: $environment) {
+                    Text("No environment").tag(DeploymentEnvironment?.none)
+                    ForEach(DeploymentEnvironment.allCases) { Text($0.title).tag(DeploymentEnvironment?.some($0)) }
+                }
+                TextField("Build / version", text: $build, prompt: Text("optional"))
+                editor("Steps to reproduce", text: $steps, height: 110)
+                editor("Expected", text: $expected, height: 64)
+                editor("Actual", text: $actual, height: 64)
+                TextField("Links / screenshots", text: $links, prompt: Text("Paste image or recording URLs"))
+                Text("Creates a new issue in \(ticket.github?.repo ?? "the ticket's repo"), linked to \(ticket.displayKey).")
+                    .font(.caption).foregroundStyle(.secondary)
             }
-            Picker("Environment", selection: $environment) {
-                Text("No environment").tag(DeploymentEnvironment?.none)
-                ForEach(DeploymentEnvironment.allCases) { Text($0.title).tag(DeploymentEnvironment?.some($0)) }
-            }
-            TextField("Build / version", text: $build, prompt: Text("optional"))
-            editor("Steps to reproduce", text: $steps)
-            editor("Expected", text: $expected, height: 44)
-            editor("Actual", text: $actual, height: 44)
-            TextField("Links / screenshots", text: $links, prompt: Text("Paste image or recording URLs"))
-            Text("Creates a new issue in \(ticket.github?.repo ?? "the ticket's repo"), linked to \(ticket.displayKey).")
-                .font(.caption).foregroundStyle(.secondary)
-            HStack {
-                Spacer()
-                Button(role: .cancel) { dismiss() } label: { ShortcutLabel(title: "Cancel", keys: "⎋") }
-                    .keyboardShortcut(.cancelAction)
-                Button(action: submit) { ShortcutLabel(title: busy ? "Creating…" : "Create issue", keys: "⌘↩") }
-                    .keyboardShortcut(.return, modifiers: .command)
-                    .disabled(title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || busy)
-            }
+        } footer: {
+            Button(role: .cancel) { dismiss() } label: { ShortcutLabel(title: "Cancel", keys: "⎋") }
+                .buttonStyle(.secondary)
+                .keyboardShortcut(.cancelAction)
+            Button(action: submit) { ShortcutLabel(title: busy ? "Creating…" : "Create issue", keys: "⌘↩") }
+                .buttonStyle(.primary)
+                .keyboardShortcut(.return, modifiers: .command)
+                .disabled(title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || busy)
         }
-        .formStyle(.grouped)
-        .frame(width: 520)
-        .padding()
         .onAppear { environment = defaultEnvironment }
     }
 

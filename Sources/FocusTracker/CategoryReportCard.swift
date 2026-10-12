@@ -33,9 +33,9 @@ struct CategoryReportCard: View {
                 SectionTitle(title: "By category", count: unique)
                 Spacer()
                 if period == .custom {
-                    DatePicker("From", selection: $customStart, displayedComponents: .date).labelsHidden()
+                    AppDatePicker(selection: $customStart)
                     Text("to").foregroundStyle(.secondary)
-                    DatePicker("To", selection: $customEnd, displayedComponents: .date).labelsHidden()
+                    AppDatePicker(selection: $customEnd)
                 }
                 Picker("Period", selection: $period) {
                     ForEach(ReportPeriod.allCases) { Text($0.title).tag($0) }

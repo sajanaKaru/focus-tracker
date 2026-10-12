@@ -84,7 +84,7 @@ struct TargetDateEditor: View {
             set: { store.setTargetDate(ticket.id, $0 ? Date() : nil) }
         ))
         if let due = ticket.dueDate {
-            DatePicker("Date", selection: Binding(get: { due }, set: { store.setTargetDate(ticket.id, $0) }), displayedComponents: .date)
+            AppDatePicker(label: "Date", selection: Binding(get: { due }, set: { store.setTargetDate(ticket.id, $0) }))
         }
     }
 }

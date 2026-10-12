@@ -429,27 +429,25 @@ struct NewTicketSheet: View {
     var onCreate: (UUID) -> Void
 
     var body: some View {
-        Form {
-            Section { Text("New Ticket").font(.title2.weight(.bold)) }
-            TextField("Title", text: $title)
-            Picker("Priority", selection: $priority) {
-                ForEach(Priority.allCases) { Text($0.title).tag($0) }
+        SheetScaffold(title: "New Ticket") {
+            Form {
+                TextField("Title", text: $title)
+                Picker("Priority", selection: $priority) {
+                    ForEach(Priority.allCases) { Text($0.title).tag($0) }
+                }
             }
-            HStack {
-                Spacer()
-                Button(role: .cancel) { dismiss() } label: { ShortcutLabel(title: "Cancel", keys: "⎋") }
-                    .keyboardShortcut(.cancelAction)
-                Button {
-                    let ticket = store.addTicket(title: title.trimmingCharacters(in: .whitespaces), priority: priority)
-                    onCreate(ticket.id)
-                    dismiss()
-                } label: { ShortcutLabel(title: "Create", keys: "↩") }
-                .keyboardShortcut(.defaultAction)
-                .disabled(title.trimmingCharacters(in: .whitespaces).isEmpty)
-            }
+        } footer: {
+            Button(role: .cancel) { dismiss() } label: { ShortcutLabel(title: "Cancel", keys: "⎋") }
+                .buttonStyle(.secondary)
+                .keyboardShortcut(.cancelAction)
+            Button {
+                let ticket = store.addTicket(title: title.trimmingCharacters(in: .whitespaces), priority: priority)
+                onCreate(ticket.id)
+                dismiss()
+            } label: { ShortcutLabel(title: "Create", keys: "↩") }
+            .buttonStyle(.primary)
+            .keyboardShortcut(.defaultAction)
+            .disabled(title.trimmingCharacters(in: .whitespaces).isEmpty)
         }
-        .formStyle(.grouped)
-        .frame(width: 420)
-        .padding()
     }
 }

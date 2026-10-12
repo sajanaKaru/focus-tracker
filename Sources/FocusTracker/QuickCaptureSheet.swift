@@ -10,28 +10,24 @@ struct QuickCaptureSheet: View {
     private var canStart: Bool { !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
 
     var body: some View {
-        Form {
-            Section { Text("Unplanned work").font(.title2.weight(.bold)) }
+        SheetScaffold(title: "Unplanned work") {
+            Form {
+                Picker("Type", selection: $kind) {
+                    ForEach(QuickCaptureKind.allCases) { Label($0.title, systemImage: $0.symbol).tag($0) }
+                }
+                .pickerStyle(.segmented)
 
-            Picker("Type", selection: $kind) {
-                ForEach(QuickCaptureKind.allCases) { Label($0.title, systemImage: $0.symbol).tag($0) }
+                TextField("Title", text: $title, prompt: Text("e.g. Login fails on Safari"))
             }
-            .pickerStyle(.segmented)
-
-            TextField("Title", text: $title, prompt: Text("e.g. Login fails on Safari"))
-
-            HStack {
-                Spacer()
-                Button(role: .cancel) { dismiss() } label: { ShortcutLabel(title: "Cancel", keys: "⎋") }
-                    .keyboardShortcut(.cancelAction)
-                Button(action: start) { ShortcutLabel(title: "Start timer", keys: "↩") }
-                    .keyboardShortcut(.defaultAction)
-                    .disabled(!canStart)
-            }
+        } footer: {
+            Button(role: .cancel) { dismiss() } label: { ShortcutLabel(title: "Cancel", keys: "⎋") }
+                .buttonStyle(.secondary)
+                .keyboardShortcut(.cancelAction)
+            Button(action: start) { ShortcutLabel(title: "Start timer", keys: "↩") }
+                .buttonStyle(.primary)
+                .keyboardShortcut(.defaultAction)
+                .disabled(!canStart)
         }
-        .formStyle(.grouped)
-        .frame(width: 440)
-        .padding()
         .onAppear { kind = store.role.profile.captureKind }
     }
 

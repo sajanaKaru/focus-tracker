@@ -2,6 +2,8 @@ import FocusCore
 import SwiftUI
 
 struct SettingsView: View {
+    private enum Field { case token, repos, aiKey }
+
     @Environment(AppStore.self) private var store
     @Environment(LicenseStore.self) private var license
     @AppStorage(PrefKey.repos) private var repos = ""
@@ -14,6 +16,9 @@ struct SettingsView: View {
     @AppStorage(PrefKey.workDays) private var workDays = 5
     @AppStorage(PrefKey.aiProvider) private var aiProviderRaw = AIProvider.openAI.rawValue
 
+    @FocusState private var focus: Field?
+
+    @State private var reposDraft = ""
     @State private var aiKey = ""
     @State private var aiModel = ""
     @State private var aiHasKey = false
@@ -26,26 +31,76 @@ struct SettingsView: View {
     @State private var confirmingRemoval = false
 
     var body: some View {
+        TabView {
+            generalTab.tabItem { Label("General", systemImage: "gearshape") }
+            githubTab.tabItem { Label("GitHub", systemImage: "arrow.triangle.2.circlepath") }
+            aiTab.tabItem { Label("AI", systemImage: "sparkles") }
+            planningTab.tabItem { Label("Planning", systemImage: "calendar") }
+        }
+        .controlSize(.large)
+        .frame(width: 640, height: 580)
+        .onAppear { reposDraft = repos }
+        .onChange(of: focus) { old, _ in
+            switch old {
+            case .token: commitToken()
+            case .repos: commitRepos()
+            case .aiKey: saveAIKey()
+            case nil: break
+            }
+        }
+    }
+
+    // MARK: General
+
+    private var generalTab: some View {
         Form {
             if let email = license.email {
                 Section("Account") {
                     LabeledContent("Signed in as", value: email)
-                    Button("Sign out") { license.signOut() }
+                    Button("Sign out") { license.signOut() }.buttonStyle(.secondary)
                 }
             }
 
-            Section("GitHub") {
+            Section("Role") {
                 Picker("Role", selection: Binding(get: { store.role }, set: { store.role = $0 })) {
                     ForEach(UserRole.allCases) { Text($0.title).tag($0) }
                 }
-                Text("Sets which tabs, status order and defaults the app shows. Change it any time.")
+                Text("Sets which tabs, status order and defaults the app shows. Applies immediately.")
                     .font(.caption).foregroundStyle(.secondary)
+            }
+
+            Section("Focus") {
+                Stepper(idleMinutes == 0 ? "Idle auto-stop: off" : "Stop timer after \(idleMinutes) min idle", value: $idleMinutes, in: 0...60)
+                Text("The timer stops when you have been away this long, and the idle time is not counted. Set 0 to turn it off.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        }
+        .formStyle(.grouped)
+    }
+
+    // MARK: GitHub
+
+    private var githubTab: some View {
+        Form {
+            Section("Connection") {
                 SecureField("Personal access token", text: $token)
-                HStack {
-                    Button("Save & Sync") { Task { await saveToken() } }
-                        .disabled(token.trimmingCharacters(in: .whitespaces).isEmpty || busy)
+                    .focused($focus, equals: .token)
+                    .onSubmit { commitToken() }
+                HStack(spacing: 8) {
+                    if busy {
+                        ProgressView().controlSize(.small)
+                        Text("Connecting…").foregroundStyle(.secondary)
+                    } else if let message {
+                        Text(message).foregroundStyle(.secondary)
+                    } else if hasToken {
+                        Label("Token saved in the Keychain", systemImage: "checkmark.circle.fill").foregroundStyle(Theme.success)
+                    } else {
+                        Text("Paste a token and press Return to connect.").foregroundStyle(.secondary)
+                    }
+                    Spacer()
                     if hasToken {
                         Button("Remove token", role: .destructive) { confirmingRemoval = true }
+                            .buttonStyle(.secondary)
                             .confirmDestructive(
                                 $confirmingRemoval, title: "Remove the GitHub token?",
                                 message: "Syncing stops until you add a token again.", confirmLabel: "Remove"
@@ -56,16 +111,22 @@ struct SettingsView: View {
                             }
                     }
                 }
-                if let message { Text(message).font(.caption).foregroundStyle(.secondary) }
-                Text("Needs read access to issues (classic token: `repo`, or fine-grained: Issues → Read). To show Sprint, Estimate, RCA and other Project fields, also add `read:project` (classic) or Projects → Read (fine-grained). To edit RCA and estimates from the app, use `project` (classic) or Projects → Read and write (fine-grained). Stored in the macOS Keychain.")
+                .font(.callout)
+                Text("Needs read access to issues (classic token: `repo`, or fine-grained: Issues → Read). To show Sprint, Estimate, RCA and other Project fields, also add `read:project` (classic) or Projects → Read (fine-grained). To edit RCA and estimates from the app, use `project` (classic) or Projects → Read and write (fine-grained).")
                     .font(.caption).foregroundStyle(.secondary)
-
-                TextField("Only these repos (owner/name, comma separated)", text: $repos)
-                Toggle("Include assigned pull requests", isOn: $includePRs)
-                Stepper("Auto-sync every \(syncMinutes) min", value: $syncMinutes, in: 1...120)
             }
 
-            aiSection
+            Section("Sync") {
+                TextField("Only these repos", text: $reposDraft, prompt: Text("owner/name, comma separated"))
+                    .focused($focus, equals: .repos)
+                    .onSubmit { commitRepos() }
+                Toggle("Include assigned pull requests", isOn: $includePRs)
+                    .onChange(of: includePRs) { syncIfConnected() }
+                Stepper("Auto-sync every \(syncMinutes) min", value: $syncMinutes, in: 1...120)
+                    .onChange(of: syncMinutes) { store.restartAutoSync() }
+                Text("Leave repos empty to sync every repo you can see. Changes sync right away.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
 
             Section("Workspaces") {
                 if store.knownWorkspaces.isEmpty {
@@ -81,79 +142,31 @@ struct SettingsView: View {
                 Text("Choose which workspaces appear in the switcher. Turned-off workspaces are hidden everywhere, including All.")
                     .font(.caption).foregroundStyle(.secondary)
             }
-
-            Section("Focus") {
-                Stepper(idleMinutes == 0 ? "Idle auto-stop: off" : "Stop timer after \(idleMinutes) min idle", value: $idleMinutes, in: 0...60)
-            }
-
-            Section("Daily plan") {
-                Picker("Working days", selection: $workDays) {
-                    Text("Weekdays (Mon–Fri)").tag(5)
-                    Text("6 days (Mon–Sat)").tag(6)
-                    Text("7 days").tag(7)
-                }
-                Stepper("Daily working time: \(Format.short(TimeInterval(workingMinutes * 60)))", value: $workingMinutes, in: 60...960, step: 30)
-                Stepper("Focus factor: \(focusPercent)%", value: $focusPercent, in: 30...100, step: 5)
-                Stepper("Default estimate: \(Format.short(TimeInterval(defaultEstimateMinutes * 60)))", value: $defaultEstimateMinutes, in: 15...480, step: 15)
-                Text("Capacity = (working time − meetings) × focus factor. Tickets without an estimate count as the default estimate. Days off have no capacity and are skipped when planning tomorrow.")
-                    .font(.caption).foregroundStyle(.secondary)
-            }
         }
         .formStyle(.grouped)
-        .frame(width: 520, height: 680)
     }
 
-    private var aiProvider: AIProvider { AIProvider(rawValue: aiProviderRaw) ?? .openAI }
-
-    private var aiSection: some View {
-        Section("AI test case drafts") {
-            Picker("Provider", selection: $aiProviderRaw) {
-                ForEach(AIProvider.allCases) { Text($0.title).tag($0.rawValue) }
-            }
-            TextField("Model", text: $aiModel, prompt: Text(aiProvider.defaultModel))
-                .onChange(of: aiModel) { store.setAIModel(aiModel, for: aiProvider) }
-            SecureField("\(aiProvider.title) API key", text: $aiKey)
-            HStack {
-                Button("Save") { saveAIKey() }
-                    .disabled(aiKey.trimmingCharacters(in: .whitespaces).isEmpty)
-                if aiHasKey {
-                    Button("Remove key", role: .destructive) {
-                        Keychain.delete(account: aiProvider.keychainAccount)
-                        aiHasKey = false
-                        aiMessage = "Key removed."
-                    }
-                }
-            }
-            if let aiMessage { Text(aiMessage).font(.caption).foregroundStyle(.secondary) }
-            Text("Drafting sends the ticket text and linked pull requests' titles, descriptions and changed file names to the selected provider. Keys are stored in the macOS Keychain.")
-                .font(.caption).foregroundStyle(.secondary)
-        }
-        .onAppear { loadAI() }
-        .onChange(of: aiProviderRaw) { loadAI() }
+    private func commitToken() {
+        guard !busy, !token.trimmingCharacters(in: .whitespaces).isEmpty else { return }
+        Task { await saveToken() }
     }
 
-    private func loadAI() {
-        aiModel = store.aiModel(for: aiProvider) == aiProvider.defaultModel ? "" : store.aiModel(for: aiProvider)
-        aiHasKey = Keychain.get(account: aiProvider.keychainAccount) != nil
-        aiKey = ""
-        aiMessage = nil
+    private func commitRepos() {
+        let value = reposDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        reposDraft = value
+        guard value != repos else { return }
+        repos = value
+        syncIfConnected()
     }
 
-    private func saveAIKey() {
-        let value = aiKey.trimmingCharacters(in: .whitespaces)
-        store.setAIModel(aiModel, for: aiProvider)
-        do {
-            try Keychain.set(value, account: aiProvider.keychainAccount)
-            aiKey = ""
-            aiHasKey = true
-            aiMessage = "Saved."
-        } catch {
-            aiMessage = error.localizedDescription
-        }
+    private func syncIfConnected() {
+        guard hasToken else { return }
+        Task { await store.syncGitHub() }
     }
 
     private func saveToken() async {
         busy = true
+        message = nil
         defer { busy = false }
         let value = token.trimmingCharacters(in: .whitespaces)
         do {
@@ -167,5 +180,96 @@ struct SettingsView: View {
         } catch {
             message = error.localizedDescription
         }
+    }
+
+    // MARK: AI
+
+    private var aiProvider: AIProvider { AIProvider(rawValue: aiProviderRaw) ?? .openAI }
+
+    private var aiTab: some View {
+        Form {
+            Section("Provider") {
+                Picker("Provider", selection: $aiProviderRaw) {
+                    ForEach(AIProvider.allCases) { Text($0.title).tag($0.rawValue) }
+                }
+                .onChange(of: aiProviderRaw) { loadAI() }
+                TextField("Model", text: $aiModel, prompt: Text(aiProvider.defaultModel))
+                    .onChange(of: aiModel) { store.setAIModel(aiModel, for: aiProvider) }
+                Text("Leave the model empty to use \(aiProvider.defaultModel).")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+
+            Section("API key") {
+                SecureField("\(aiProvider.title) API key", text: $aiKey)
+                    .focused($focus, equals: .aiKey)
+                    .onSubmit { saveAIKey() }
+                HStack(spacing: 8) {
+                    if let aiMessage {
+                        Text(aiMessage).foregroundStyle(.secondary)
+                    } else if aiHasKey {
+                        Label("Key saved in the Keychain", systemImage: "checkmark.circle.fill").foregroundStyle(Theme.success)
+                    } else {
+                        Text("Paste a key and press Return to save it.").foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    if aiHasKey {
+                        Button("Remove key", role: .destructive) {
+                            Keychain.delete(account: aiProvider.keychainAccount)
+                            aiHasKey = false
+                            aiMessage = "Key removed."
+                        }
+                        .buttonStyle(.secondary)
+                    }
+                }
+                .font(.callout)
+                Text("Drafting sends the ticket text and linked pull requests' titles, descriptions and changed file names to the selected provider. Keys are stored in the macOS Keychain.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        }
+        .formStyle(.grouped)
+        .onAppear { loadAI() }
+    }
+
+    private func loadAI() {
+        aiModel = store.aiModel(for: aiProvider) == aiProvider.defaultModel ? "" : store.aiModel(for: aiProvider)
+        aiHasKey = Keychain.get(account: aiProvider.keychainAccount) != nil
+        aiKey = ""
+        aiMessage = nil
+    }
+
+    private func saveAIKey() {
+        let value = aiKey.trimmingCharacters(in: .whitespaces)
+        guard !value.isEmpty else { return }
+        do {
+            try Keychain.set(value, account: aiProvider.keychainAccount)
+            aiKey = ""
+            aiHasKey = true
+            aiMessage = "Saved."
+        } catch {
+            aiMessage = error.localizedDescription
+        }
+    }
+
+    // MARK: Planning
+
+    private var planningTab: some View {
+        Form {
+            Section("Daily plan") {
+                Picker("Working days", selection: $workDays) {
+                    Text("Weekdays (Mon–Fri)").tag(5)
+                    Text("6 days (Mon–Sat)").tag(6)
+                    Text("7 days").tag(7)
+                }
+                Stepper("Daily working time: \(Format.short(TimeInterval(workingMinutes * 60)))", value: $workingMinutes, in: 60...960, step: 30)
+                Stepper("Focus factor: \(focusPercent)%", value: $focusPercent, in: 30...100, step: 5)
+                Stepper("Default estimate: \(Format.short(TimeInterval(defaultEstimateMinutes * 60)))", value: $defaultEstimateMinutes, in: 15...480, step: 15)
+            }
+
+            Section {
+                Text("Capacity = (working time − meetings) × focus factor. Tickets without an estimate count as the default estimate. Days off have no capacity and are skipped when planning tomorrow. Changes apply to the plan immediately.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        }
+        .formStyle(.grouped)
     }
 }
