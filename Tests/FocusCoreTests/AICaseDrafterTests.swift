@@ -15,6 +15,7 @@ final class AICaseDrafterTests: XCTestCase {
         case .openAI: #"{"choices":[{"message":{"content":\#(escaped(text))}}]}"#
         case .anthropic: #"{"content":[{"type":"text","text":\#(escaped(text))}]}"#
         case .gemini: #"{"candidates":[{"content":{"parts":[{"text":\#(escaped(text))}]}}]}"#
+        case .copilot: ""
         }
     }
 
@@ -88,7 +89,7 @@ final class AICaseDrafterTests: XCTestCase {
 
     func testParsesFencedJSONAndBareArray() async throws {
         let fenced = "Here you go:\n```json\n" + #"[{"title":"A","steps":"s","expected":"e"}]"# + "\n```"
-        for provider in AIProvider.allCases {
+        for provider in AIProvider.allCases.filter(\.usesAPIKey) {
             let (result, _) = try await draft(provider, text: fenced)
             XCTAssertEqual(result.map(\.title), ["A"], "\(provider)")
         }

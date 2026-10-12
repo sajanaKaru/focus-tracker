@@ -1,7 +1,7 @@
 import Foundation
 
 public enum AIProvider: String, CaseIterable, Identifiable, Codable, Sendable {
-    case openAI, anthropic, gemini
+    case openAI, anthropic, gemini, copilot
 
     public var id: String { rawValue }
 
@@ -10,6 +10,7 @@ public enum AIProvider: String, CaseIterable, Identifiable, Codable, Sendable {
         case .openAI: "OpenAI"
         case .anthropic: "Anthropic"
         case .gemini: "Gemini"
+        case .copilot: "GitHub Copilot"
         }
     }
 
@@ -18,10 +19,14 @@ public enum AIProvider: String, CaseIterable, Identifiable, Codable, Sendable {
         case .openAI: "gpt-4o-mini"
         case .anthropic: "claude-sonnet-4-5"
         case .gemini: "gemini-2.5-flash"
+        case .copilot: "auto"
         }
     }
 
     public var keychainAccount: String { "ai-key-\(rawValue)" }
+
+    /// Copilot signs in through the Copilot CLI instead of a key.
+    public var usesAPIKey: Bool { self != .copilot }
 }
 
 public struct DraftCase: Identifiable, Equatable, Sendable {
@@ -46,6 +51,10 @@ public enum AIError: LocalizedError, Equatable {
     case modelNotFound(String, AIProvider, String)
     case unreadableReply
     case noCases
+    case copilotNotInstalled
+    case copilotNotSignedIn
+    case copilotNoEnabledModels
+    case copilotFailed(String)
 
     public var errorDescription: String? {
         switch self {
@@ -57,6 +66,10 @@ public enum AIError: LocalizedError, Equatable {
         case .modelNotFound(let m, let p, let detail): "\(p.title) returned 404 for model \"\(m)\": \(detail)"
         case .unreadableReply: "The AI reply could not be read. Try again."
         case .noCases: "The AI returned no test cases."
+        case .copilotNotInstalled: "GitHub Copilot CLI not found. Install it or set its path in Settings."
+        case .copilotNotSignedIn: "Run `copilot login` in a terminal, then try again."
+        case .copilotNoEnabledModels: "Your GitHub Copilot account has no enabled models."
+        case .copilotFailed(let message): "GitHub Copilot: \(message)"
         }
     }
 }
@@ -171,6 +184,8 @@ public struct AICaseClient: Sendable {
                 "contents": [["role": "user", "parts": [["text": prompt.user]]]],
                 "generationConfig": ["responseMimeType": "application/json"]
             ]
+        case .copilot:
+            throw AIError.copilotFailed("Copilot drafts do not go through HTTP.")
         }
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
@@ -194,6 +209,8 @@ public struct AICaseClient: Sendable {
         case .gemini:
             let content = (root["candidates"] as? [[String: Any]])?.first?["content"] as? [String: Any]
             return (content?["parts"] as? [[String: Any]])?.compactMap { $0["text"] as? String }.joined(separator: "\n")
+        case .copilot:
+            return nil
         }
     }
 
