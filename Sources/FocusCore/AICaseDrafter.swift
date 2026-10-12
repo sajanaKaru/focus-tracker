@@ -17,7 +17,7 @@ public enum AIProvider: String, CaseIterable, Identifiable, Codable, Sendable {
         switch self {
         case .openAI: "gpt-4o-mini"
         case .anthropic: "claude-sonnet-4-5"
-        case .gemini: "gemini-2.0-flash"
+        case .gemini: "gemini-2.5-flash"
         }
     }
 
@@ -43,6 +43,7 @@ public enum AIError: LocalizedError, Equatable {
     case rateLimited(AIProvider)
     case http(Int, AIProvider)
     case invalidModel
+    case modelNotFound(String, AIProvider)
     case unreadableReply
     case noCases
 
@@ -53,6 +54,7 @@ public enum AIError: LocalizedError, Equatable {
         case .rateLimited(let p): "\(p.title) rate limit reached. Try again later."
         case .http(let code, let p): "\(p.title) returned HTTP \(code)."
         case .invalidModel: "The model name is not valid. Check it in Settings."
+        case .modelNotFound(let m, let p): "\(p.title) has no model \"\(m)\" (it may be retired). Change the model in Settings."
         case .unreadableReply: "The AI reply could not be read. Try again."
         case .noCases: "The AI returned no test cases."
         }
@@ -120,6 +122,7 @@ public struct AICaseClient: Sendable {
         case 200..<300: break
         case 401, 403: throw AIError.unauthorized(provider)
         case 429: throw AIError.rateLimited(provider)
+        case 404: throw AIError.modelNotFound(model, provider)
         default: throw AIError.http(response.statusCode, provider)
         }
         guard let text = replyText(data) else { throw AIError.unreadableReply }
