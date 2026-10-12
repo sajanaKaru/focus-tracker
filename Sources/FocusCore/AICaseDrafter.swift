@@ -81,6 +81,8 @@ public struct DraftPrompt: Equatable, Sendable {
     static let maxTicketBody = 4000
     static let maxPRBody = 3000
     static let maxFiles = 100
+    static let maxPatchPerFile = 4000
+    static let maxPatchTotal = 24000
 
     public init(system: String, user: String) {
         self.system = system
@@ -88,16 +90,20 @@ public struct DraftPrompt: Equatable, Sendable {
     }
 
     public static func make(ticketKey: String, title: String, body: String, pullRequests: [PullRequestDetail]) -> DraftPrompt {
-        let system = """
+        var system = """
         You are a QA engineer. From the ticket and pull request details, write concise manual test cases that verify the change. \
         Cover the main behavior, edge cases and likely regressions. \
         Reply with JSON only, in this shape: {"cases":[{"title":"...","steps":["..."],"expected":"..."}]}. \
         Write 3 to 10 cases. Do not invent features that are not described.
         """
+        if pullRequests.contains(where: { $0.patches.contains { !($0.patch ?? "").isEmpty } }) {
+            system += " Use the code changes to make steps and expected results specific, and do not invent behavior that is not visible in them."
+        }
         var user = "Ticket \(ticketKey): \(title)\n\n\(clip(body, maxTicketBody))\n"
         if pullRequests.isEmpty {
             user += "\nNo linked pull request.\n"
         }
+        var codeBudget = maxPatchTotal
         for pr in pullRequests {
             user += "\nPull request \(pr.repo)#\(pr.number): \(pr.title)\n\(clip(pr.body, maxPRBody))\n"
             let files = pr.files.prefix(maxFiles)
@@ -105,8 +111,40 @@ public struct DraftPrompt: Equatable, Sendable {
                 user += "Changed files:\n" + files.joined(separator: "\n") + "\n"
                 if pr.files.count > maxFiles { user += "…and \(pr.files.count - maxFiles) more\n" }
             }
+            user += codeSection(pr.patches, budget: &codeBudget)
         }
         return DraftPrompt(system: system, user: user)
+    }
+
+    /// Patch text shared across all pull requests by one budget; lockfiles, generated files and images are left out.
+    private static func codeSection(_ patches: [PullRequestFilePatch], budget: inout Int) -> String {
+        var out = ""
+        var hidden = 0
+        for file in patches {
+            guard let patch = file.patch, !patch.isEmpty, !isNoise(file.path) else { continue }
+            guard budget > 0 else { hidden += 1; continue }
+            let text = clip(patch, min(maxPatchPerFile, budget))
+            budget -= text.count
+            out += "--- \(file.path) (\(file.status))\n\(text)\n"
+        }
+        if hidden > 0 { out += "…and \(hidden) more changed files not shown\n" }
+        return out.isEmpty ? "" : "Code changes:\n" + out
+    }
+
+    private static let noiseNames: Set<String> = [
+        "package-lock.json", "yarn.lock", "pnpm-lock.yaml", "package.resolved", "podfile.lock", "cargo.lock",
+        "composer.lock", "gemfile.lock", "go.sum"
+    ]
+    private static let noiseSuffixes = [
+        ".lock", ".min.js", ".min.css", ".map", ".pbxproj", ".png", ".jpg", ".jpeg", ".gif", ".svg", ".ico", ".pdf"
+    ]
+    private static let noiseFolders: Set<String> = ["node_modules", "dist", "pods", ".build"]
+
+    private static func isNoise(_ path: String) -> Bool {
+        let lower = path.lowercased()
+        let parts = lower.split(separator: "/").map(String.init)
+        guard let name = parts.last else { return true }
+        return noiseNames.contains(name) || noiseSuffixes.contains { name.hasSuffix($0) } || !noiseFolders.isDisjoint(with: parts.dropLast())
     }
 
     private static func clip(_ text: String, _ limit: Int) -> String {

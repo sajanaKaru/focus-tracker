@@ -21,6 +21,13 @@ extension AppStore {
     /// Copilot has no key to check; a missing or signed-out CLI is reported when drafting.
     public var hasAIKey: Bool { !aiProvider.usesAPIKey || aiKey(for: aiProvider) != nil }
 
+    /// Whether drafting sends the linked pull requests' code changes to the provider. Off by default.
+    public var aiIncludeCode: Bool { defaults.bool(forKey: PrefKey.aiIncludeCode) }
+
+    public func setAIIncludeCode(_ include: Bool) {
+        defaults.set(include, forKey: PrefKey.aiIncludeCode)
+    }
+
     private func aiKey(for provider: AIProvider) -> String? {
         guard let key = aiKeyProvider(provider)?.trimmingCharacters(in: .whitespacesAndNewlines), !key.isEmpty else { return nil }
         return key
@@ -45,7 +52,13 @@ extension AppStore {
             guard let token = tokenProvider(), !token.isEmpty else { throw GitHubError.unauthorized }
             let github = GitHubClient(token: token, transport: transport)
             for pr in pullRequests {
-                details.append(try await github.fetchPullRequestDetail(repo: pr.repo, number: pr.number))
+                var detail = try await github.fetchPullRequestDetail(repo: pr.repo, number: pr.number)
+                if aiIncludeCode {
+                    // Without patches the draft still works from titles and file names.
+                    detail.patches = (try? await github.fetchPullRequestPatches(repo: pr.repo, number: pr.number)) ?? []
+                    try Task.checkCancellation()
+                }
+                details.append(detail)
             }
         }
         let prompt = DraftPrompt.make(ticketKey: ticket.displayKey, title: ticket.title, body: ticket.body, pullRequests: details)

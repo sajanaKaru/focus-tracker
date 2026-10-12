@@ -4,6 +4,7 @@ import SwiftUI
 struct DraftCasesSheet: View {
     @Environment(AppStore.self) private var store
     @Environment(\.dismiss) private var dismiss
+    @AppStorage(PrefKey.aiIncludeCode) private var includeCode = false
     let ticket: Ticket
 
     private enum Phase { case loadingPRs, choosing, generating, review }
@@ -53,7 +54,9 @@ struct DraftCasesSheet: View {
                 }
             }
         }
-        Text("The ticket text, the chosen pull requests' titles, descriptions and changed file names are sent to \(store.aiProvider.title). Source code is not sent.")
+        Text(includeCode
+            ? "The ticket text, the chosen pull requests' titles, descriptions, changed file names and code changes (diffs) are sent to \(store.aiProvider.title)."
+            : "The ticket text, the chosen pull requests' titles, descriptions and changed file names are sent to \(store.aiProvider.title). Source code is not sent.")
             .font(.caption).foregroundStyle(.secondary)
     }
 

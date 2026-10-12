@@ -165,4 +165,59 @@ final class AICaseDrafterTests: XCTestCase {
         XCTAssertTrue(prompt.user.contains("file99.swift"))
         XCTAssertFalse(prompt.user.contains("file100.swift"))
     }
+
+    // MARK: Code changes
+
+    private func pr(_ patches: [PullRequestFilePatch]) -> PullRequestDetail {
+        PullRequestDetail(repo: "me/a", number: 9, title: "T", body: "", files: patches.map(\.path), patches: patches)
+    }
+
+    func testPromptIncludesCodeChangesAndTellsTheModelToUseThem() {
+        let patch = PullRequestFilePatch(path: "Sources/Login.swift", status: "modified", patch: "@@ -1 +1 @@\n-old\n+new")
+        let prompt = DraftPrompt.make(ticketKey: "k", title: "T", body: "", pullRequests: [pr([patch])])
+        XCTAssertTrue(prompt.user.contains("Code changes:"))
+        XCTAssertTrue(prompt.user.contains("--- Sources/Login.swift (modified)"))
+        XCTAssertTrue(prompt.user.contains("+new"))
+        XCTAssertTrue(prompt.system.contains("code changes"))
+    }
+
+    func testPromptWithoutPatchesHasNoCodeSectionAndTheOriginalInstructions() {
+        let plain = DraftPrompt.make(ticketKey: "k", title: "T", body: "", pullRequests: [pr([])])
+        let binaryOnly = DraftPrompt.make(ticketKey: "k", title: "T", body: "", pullRequests: [pr([PullRequestFilePatch(path: "a.bin", status: "added", patch: nil)])])
+        for prompt in [plain, binaryOnly] {
+            XCTAssertFalse(prompt.user.contains("Code changes:"))
+            XCTAssertFalse(prompt.system.contains("code changes"))
+        }
+    }
+
+    func testPromptSkipsLockfilesGeneratedFilesAndImages() {
+        let names = ["Package.resolved", "web/package-lock.json", "app.min.js", "Pods/X/y.swift", "logo.PNG", "App.xcodeproj/project.pbxproj"]
+        let noise = names.map { PullRequestFilePatch(path: $0, status: "modified", patch: "+noise") }
+        let keep = PullRequestFilePatch(path: "Sources/Real.swift", status: "added", patch: "+real")
+        let prompt = DraftPrompt.make(ticketKey: "k", title: "T", body: "", pullRequests: [pr(noise + [keep])])
+        XCTAssertTrue(prompt.user.contains("+real"))
+        XCTAssertFalse(prompt.user.contains("+noise"))
+        XCTAssertFalse(prompt.user.contains("more changed files"))
+    }
+
+    func testPromptClipsEachPatchAndTheTotal() {
+        let big = String(repeating: "y", count: 10_000)
+        let one = DraftPrompt.make(ticketKey: "k", title: "T", body: "", pullRequests: [pr([PullRequestFilePatch(path: "a.swift", status: "added", patch: big)])])
+        XCTAssertLessThan(one.user.count, 5_000)
+
+        let many = (0..<20).map { PullRequestFilePatch(path: "f\($0).swift", status: "added", patch: big) }
+        let prompt = DraftPrompt.make(ticketKey: "k", title: "T", body: "", pullRequests: [pr(many)])
+        XCTAssertLessThan(prompt.user.count, 27_000)
+        XCTAssertTrue(prompt.user.contains("f0.swift"))
+        XCTAssertTrue(prompt.user.contains("more changed files not shown"))
+        XCTAssertFalse(prompt.user.contains("--- f19.swift"))
+    }
+
+    func testTheTotalBudgetIsSharedAcrossPullRequests() {
+        let big = String(repeating: "z", count: 4_000)
+        let files = (0..<5).map { PullRequestFilePatch(path: "g\($0).swift", status: "added", patch: big) }
+        let first = pr(files), second = PullRequestDetail(repo: "me/b", number: 3, title: "U", body: "", files: ["h.swift"], patches: [PullRequestFilePatch(path: "h.swift", status: "added", patch: big)])
+        let prompt = DraftPrompt.make(ticketKey: "k", title: "T", body: "", pullRequests: [first, first, first, first, first, second])
+        XCTAssertLessThan(prompt.user.count, 30_000)
+    }
 }

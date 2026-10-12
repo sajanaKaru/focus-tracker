@@ -17,6 +17,7 @@ public enum PrefKey {
     public static let role = "userRole"
     public static let aiProvider = "aiProvider"
     public static let aiModelPrefix = "aiModel."
+    public static let aiIncludeCode = "aiIncludeCode"
     public static let copilotPath = "copilotPath"
 }
 

@@ -16,6 +16,7 @@ struct SettingsView: View {
     @AppStorage(PrefKey.workDays) private var workDays = 5
     @AppStorage(PrefKey.aiProvider) private var aiProviderRaw = AIProvider.openAI.rawValue
     @AppStorage(PrefKey.copilotPath) private var copilotPath = ""
+    @AppStorage(PrefKey.aiIncludeCode) private var aiIncludeCode = false
 
     @FocusState private var focus: Field?
 
@@ -236,6 +237,12 @@ struct SettingsView: View {
                     Text("Drafting sends the ticket text and linked pull requests' titles, descriptions and changed file names to the selected provider. Keys are stored in the macOS Keychain.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
+            }
+
+            Section("Code context") {
+                Toggle("Send PR code changes", isOn: $aiIncludeCode)
+                Text("Adds the code changes (diffs) of linked pull requests to the prompt so cases match what actually changed. Up to about 24,000 characters; lockfiles, generated files and images are skipped. They are sent to \(aiProvider.title) along with the ticket text. Off by default.")
+                    .font(.caption).foregroundStyle(.secondary)
             }
         }
         .formStyle(.grouped)
