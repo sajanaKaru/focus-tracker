@@ -95,8 +95,10 @@ final class ACPConversation: @unchecked Sendable {
     static func map(_ error: [String: Any]) -> AIError {
         let message = (error["message"] as? String) ?? "Unknown error"
         let lower = message.lowercased()
-        if ["auth", "log in", "login", "sign in", "signed in"].contains(where: lower.contains) { return .copilotNotSignedIn }
-        if ["rate limit", "quota", "limit reached"].contains(where: lower.contains) { return .rateLimited(.copilot) }
+        // Rate limits first: "rate limit exceeded for authenticated user" is not a sign-in problem.
+        if ["rate limit", "rate-limit", "too many requests", "quota", "limit reached"].contains(where: lower.contains) { return .rateLimited(.copilot) }
+        let signedOut = ["authentication", "unauthenticated", "not authenticated", "unauthorized", "auth required", "log in", "login", "sign in", "signed in"]
+        if signedOut.contains(where: lower.contains) { return .copilotNotSignedIn }
         return .copilotFailed(String(message.prefix(300)))
     }
 }

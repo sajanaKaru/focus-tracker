@@ -83,6 +83,40 @@ final class CopilotACPClientTests: XCTestCase {
         }
     }
 
+    func testRateLimitMentioningAuthenticatedUserIsRateLimited() async {
+        for message in ["API rate limit exceeded for authenticated user", "Too many requests", "Request was rate-limited"] {
+            let channel = ScriptedChannel.agent(fail: ["session/new": message])
+            do {
+                _ = try await client(channel).availableModels()
+                XCTFail("expected failure for \(message)")
+            } catch {
+                XCTAssertEqual(error as? AIError, .rateLimited(.copilot), message)
+            }
+        }
+    }
+
+    func testAuthorizedModelErrorIsNotSignedOut() async {
+        let channel = ScriptedChannel.agent(fail: ["session/new": "Not authorized to use model X"])
+        do {
+            _ = try await client(channel).availableModels()
+            XCTFail("expected failure")
+        } catch {
+            XCTAssertEqual(error as? AIError, .copilotFailed("Not authorized to use model X"))
+        }
+    }
+
+    func testOtherSignInWordingsMapToNotSignedIn() async {
+        for message in ["Unauthorized", "User is not authenticated", "Please sign in", "Run copilot login"] {
+            let channel = ScriptedChannel.agent(fail: ["session/new": message])
+            do {
+                _ = try await client(channel).availableModels()
+                XCTFail("expected failure for \(message)")
+            } catch {
+                XCTAssertEqual(error as? AIError, .copilotNotSignedIn, message)
+            }
+        }
+    }
+
     func testOtherCLIErrorsKeepTheirMessage() async {
         let channel = ScriptedChannel.agent(fail: ["session/prompt": "boom"])
         do {
