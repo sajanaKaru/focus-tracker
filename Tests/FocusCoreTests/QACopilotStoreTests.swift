@@ -5,8 +5,10 @@ import XCTest
 final class QACopilotStoreTests: XCTestCase {
     private let reply = #"{"cases":[{"title":"Login works","steps":"Open","expected":"In"},{"title":"Bad password"}]}"#
 
-    private func makeStore(_ channel: ScriptedChannel) -> (AppStore, RecordingTransport) {
-        let transport = RecordingTransport { _ in (404, "{}") }
+    private let prDetail = #"{"data":{"repository":{"pullRequest":{"title":"Add OAuth login","body":"Uses the OAuth device flow","files":{"nodes":[{"path":"Login.swift"}]}}}}}"#
+
+    private func makeStore(_ channel: ScriptedChannel, github: (@Sendable (URLRequest) -> (Int, String))? = nil) -> (AppStore, RecordingTransport) {
+        let transport = RecordingTransport(github ?? { _ in (404, "{}") })
         let store = AppStore(
             storeURL: FileManager.default.temporaryDirectory.appendingPathComponent("ft-\(UUID().uuidString).json"),
             defaults: UserDefaults(suiteName: "ft-\(UUID().uuidString)")!, transport: transport,
@@ -28,7 +30,7 @@ final class QACopilotStoreTests: XCTestCase {
         XCTAssertTrue(store.hasAIKey)
     }
 
-    func testDraftsThroughCopilotWithoutAnyHTTPRequestOrGitHubToken() async throws {
+    func testDraftsThroughCopilotWithoutAnyHTTPRequestWhenThereAreNoPullRequests() async throws {
         let channel = ScriptedChannel.agent(chunks: [reply])
         let (store, transport) = makeStore(channel)
         let ticket = addTicket(store)
@@ -39,6 +41,26 @@ final class QACopilotStoreTests: XCTestCase {
         XCTAssertTrue(transport.requests.isEmpty)
         let wire = String(decoding: try JSONSerialization.data(withJSONObject: channel.sent), as: UTF8.self)
         XCTAssertTrue(wire.contains("Users sign in"))
+        XCTAssertFalse(wire.contains("gh-token"))
+    }
+
+    func testOnlyGitHubIsContactedWithItsTokenAndTheTokenNeverReachesCopilot() async throws {
+        let channel = ScriptedChannel.agent(chunks: [reply])
+        let detail = prDetail
+        let (store, transport) = makeStore(channel) { request in
+            request.url?.host == "api.github.com" ? (200, detail) : (404, "{}")
+        }
+        let ticket = addTicket(store)
+        let pr = LinkedPullRequest(repo: "me/a", number: 9, title: "Add OAuth login", url: "u")
+        let drafts = try await store.draftTestCases(ticketID: ticket.id, pullRequests: [pr])
+
+        XCTAssertEqual(drafts.map(\.title), ["Login works", "Bad password"])
+        XCTAssertFalse(transport.requests.isEmpty)
+        XCTAssertTrue(transport.requests.allSatisfy { $0.url?.host == "api.github.com" })
+        XCTAssertTrue(transport.requests.allSatisfy { $0.value(forHTTPHeaderField: "Authorization") == "Bearer gh-token" })
+        let wire = String(decoding: try JSONSerialization.data(withJSONObject: channel.sent), as: UTF8.self)
+        XCTAssertTrue(wire.contains("Add OAuth login"))
+        XCTAssertTrue(wire.contains("Uses the OAuth device flow"))
         XCTAssertFalse(wire.contains("gh-token"))
     }
 
