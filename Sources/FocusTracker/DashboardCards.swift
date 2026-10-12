@@ -86,7 +86,7 @@ struct TicketListCard<Trailing: View>: View {
                 .padding(.horizontal, 14)
                 .padding(.vertical, 8)
                 .contentShape(Rectangle())
-                .onTapGesture { selectedTicketID = ticket.id }
+                .selectsTicket(ticket.id, selection: $selectedTicketID)
             }
         }
         .cardStyle(padding: 0)

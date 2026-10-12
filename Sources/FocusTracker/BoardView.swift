@@ -86,7 +86,7 @@ struct BoardView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .cardStyle(padding: 12, selected: selectedTicketID == ticket.id)
         .hoverLift()
-        .onTapGesture { selectedTicketID = ticket.id }
+        .selectsTicket(ticket.id, selection: $selectedTicketID)
         .draggable(ticket.id.uuidString)
     }
 }

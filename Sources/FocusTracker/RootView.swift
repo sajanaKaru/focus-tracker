@@ -105,6 +105,7 @@ struct RootView: View {
     @State private var selection: SidebarItem?
     @State private var selectedTicketID: UUID?
     @State private var planTicketID: UUID?
+    @State private var ticketPageID: UUID?
     @State private var showingNewTicket = false
     @State private var filter = TicketFilter()
     @State private var logFilter = ActionLogFilter()
@@ -123,8 +124,15 @@ struct RootView: View {
     private func openTicket(_ ticket: Ticket) {
         planTicketID = nil
         selectedTicketID = ticket.id
+        if ticketPageID != nil { ticketPageID = ticket.id }
         searchText = ""
         searchFocused = false
+    }
+
+    private func openTicketPage(_ id: UUID) {
+        planTicketID = nil
+        selectedTicketID = id
+        ticketPageID = id
     }
 
     /// Return opens the best match: the first ticket, else the first pull request.
@@ -164,6 +172,7 @@ struct RootView: View {
                     TicketDetailView(
                         ticketID: id,
                         onPlan: { planTicketID = id },
+                        onOpenPage: { openTicketPage(id) },
                         onShowLog: {
                             logFilter = ActionLogFilter(ticketID: id)
                             selection = .actionLog
@@ -174,6 +183,7 @@ struct RootView: View {
             }
         }
         .toolbarBackground(.hidden, for: .windowToolbar)
+        .environment(\.openTicketPage, { openTicketPage($0) })
         .overlay(alignment: .top) { TitleBarStrip() }
         .background {
             Button("Search") { searchFocused = true }
@@ -216,12 +226,16 @@ struct RootView: View {
                 selectedTicketID = id
             }
         }
-        .onChange(of: selection) { planTicketID = nil }
+        .onChange(of: selection) {
+            planTicketID = nil
+            ticketPageID = nil
+        }
         .onChange(of: store.role) { old, _ in
             if let selection, !visibleItems.contains(selection) { self.selection = nil }
             Task { await store.roleDidChange(from: old) }
         }
         .onChange(of: store.activeWorkspace) {
+            ticketPageID = nil
             filter.repo = nil
             todayFilter.repo = nil
             selectedTicketID = nil
@@ -262,13 +276,24 @@ struct RootView: View {
     }
 
     private var inspectorShown: Binding<Bool> {
-        Binding(get: { selectedTicketID != nil && planTicketID == nil }, set: { if !$0 { selectedTicketID = nil } })
+        Binding(get: { selectedTicketID != nil && planTicketID == nil && ticketPageID == nil }, set: { if !$0 { selectedTicketID = nil } })
     }
 
     @ViewBuilder
     private var content: some View {
         if let id = planTicketID {
             PlanPage(ticketID: id) { planTicketID = nil }
+        } else if let id = ticketPageID {
+            TicketPage(
+                ticketID: id,
+                onBack: { ticketPageID = nil },
+                onPlan: { planTicketID = id },
+                onShowLog: {
+                    logFilter = ActionLogFilter(ticketID: id)
+                    ticketPageID = nil
+                    selection = .actionLog
+                }
+            )
         } else {
             sidebarContent
         }

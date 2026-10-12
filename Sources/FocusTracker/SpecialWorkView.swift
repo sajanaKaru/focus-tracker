@@ -52,7 +52,7 @@ struct SpecialWorkView: View {
                                         TicketRow(ticket: ticket)
                                             .cardStyle(padding: 10, selected: selectedTicketID == ticket.id)
                                             .hoverLift()
-                                            .onTapGesture { selectedTicketID = ticket.id }
+                                            .selectsTicket(ticket.id, selection: $selectedTicketID)
                                     }
                                 }
                             }

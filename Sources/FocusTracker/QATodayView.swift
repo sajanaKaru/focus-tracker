@@ -132,6 +132,6 @@ struct QATodayView: View {
         .padding(.horizontal, 14)
         .padding(.vertical, 8)
         .contentShape(Rectangle())
-        .onTapGesture { selectedTicketID = bug.ticketID }
+        .selectsTicket(bug.ticketID, selection: $selectedTicketID)
     }
 }

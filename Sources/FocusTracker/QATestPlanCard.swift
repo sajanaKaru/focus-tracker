@@ -84,7 +84,7 @@ struct QATestPlanCard: View {
         .padding(.horizontal, 14)
         .padding(.vertical, 8)
         .contentShape(Rectangle())
-        .onTapGesture { selectedTicketID = candidate.id }
+        .selectsTicket(candidate.id, selection: $selectedTicketID)
     }
 
     private func loadCalendarAndPlan(day: Date) async {
