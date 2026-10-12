@@ -17,6 +17,7 @@ public enum PrefKey {
     public static let role = "userRole"
     public static let aiProvider = "aiProvider"
     public static let aiModelPrefix = "aiModel."
+    public static let copilotPath = "copilotPath"
 }
 
 public enum SyncState: Equatable, Sendable {
@@ -86,6 +87,7 @@ public final class AppStore {
     @ObservationIgnored let transport: HTTPTransport
     @ObservationIgnored let tokenProvider: () -> String?
     @ObservationIgnored let aiKeyProvider: (AIProvider) -> String?
+    @ObservationIgnored let copilotChannel: (@Sendable (URL) throws -> ACPChannel)?
     @ObservationIgnored private var lastOptionsLoad: Date?
     @ObservationIgnored private let idleSeconds: () -> TimeInterval
     @ObservationIgnored private var tickTask: Task<Void, Never>?
@@ -108,7 +110,8 @@ public final class AppStore {
         transport: HTTPTransport = URLSessionTransport(),
         tokenProvider: @escaping () -> String? = { Keychain.get(account: Keychain.githubAccount) },
         idleSeconds: @escaping () -> TimeInterval = IdleTime.current,
-        aiKeyProvider: @escaping (AIProvider) -> String? = { Keychain.get(account: $0.keychainAccount) }
+        aiKeyProvider: @escaping (AIProvider) -> String? = { Keychain.get(account: $0.keychainAccount) },
+        copilotChannel: (@Sendable (URL) throws -> ACPChannel)? = nil
     ) {
         self.storeURL = storeURL
         backupVault = BackupVault(directory: storeURL.deletingLastPathComponent().appendingPathComponent("Backups", isDirectory: true))
@@ -116,6 +119,7 @@ public final class AppStore {
         self.transport = transport
         self.tokenProvider = tokenProvider
         self.aiKeyProvider = aiKeyProvider
+        self.copilotChannel = copilotChannel
         self.idleSeconds = idleSeconds
         githubLogin = defaults.string(forKey: PrefKey.githubLogin)
         hiddenWorkspaces = Set(defaults.stringArray(forKey: PrefKey.hiddenWorkspaces) ?? [])

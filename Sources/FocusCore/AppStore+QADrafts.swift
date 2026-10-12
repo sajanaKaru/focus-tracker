@@ -18,7 +18,8 @@ extension AppStore {
         defaults.set(model.trimmingCharacters(in: .whitespaces), forKey: PrefKey.aiModelPrefix + provider.rawValue)
     }
 
-    public var hasAIKey: Bool { aiKey(for: aiProvider) != nil }
+    /// Copilot has no key to check; a missing or signed-out CLI is reported when drafting.
+    public var hasAIKey: Bool { !aiProvider.usesAPIKey || aiKey(for: aiProvider) != nil }
 
     private func aiKey(for provider: AIProvider) -> String? {
         guard let key = aiKeyProvider(provider)?.trimmingCharacters(in: .whitespacesAndNewlines), !key.isEmpty else { return nil }
@@ -35,7 +36,8 @@ extension AppStore {
     /// Asks the configured AI provider for draft cases. Nothing is saved; see `addDrafts`.
     public func draftTestCases(ticketID: UUID, pullRequests: [LinkedPullRequest]) async throws -> [DraftCase] {
         let provider = aiProvider
-        guard let key = aiKey(for: provider) else { throw AIError.missingKey(provider) }
+        let key = aiKey(for: provider)
+        if provider.usesAPIKey, key == nil { throw AIError.missingKey(provider) }
         guard let ticket = ticket(ticketID) else { return [] }
 
         var details: [PullRequestDetail] = []
@@ -47,8 +49,24 @@ extension AppStore {
             }
         }
         let prompt = DraftPrompt.make(ticketKey: ticket.displayKey, title: ticket.title, body: ticket.body, pullRequests: details)
-        let client = AICaseClient(provider: provider, model: aiModel(for: provider), apiKey: key, transport: transport)
+        if provider == .copilot {
+            return try await copilotClient().draftCases(prompt, model: aiModel(for: provider))
+        }
+        let client = AICaseClient(provider: provider, model: aiModel(for: provider), apiKey: key ?? "", transport: transport)
         return try await client.draftCases(prompt)
+    }
+
+    /// Models enabled for the signed-in Copilot account.
+    public func copilotModels() async throws -> [CopilotModel] {
+        try await copilotClient().availableModels()
+    }
+
+    private func copilotClient() async throws -> CopilotACPClient {
+        if let copilotChannel { return CopilotACPClient(open: copilotChannel) }
+        guard let executable = await CopilotLocator.locate(override: defaults.string(forKey: PrefKey.copilotPath)) else {
+            throw AIError.copilotNotInstalled
+        }
+        return CopilotACPClient(open: { try ProcessACPChannel(executable: executable, directory: $0) })
     }
 
     /// Saves the chosen drafts as test cases; returns how many were added.
