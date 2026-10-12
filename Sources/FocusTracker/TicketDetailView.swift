@@ -35,10 +35,6 @@ struct TicketDetailView: View {
 
                 TicketDetailsSection(ticket: ticket)
 
-                if isRemote {
-                    TicketQASection(ticket: ticket).id(ticketID)
-                }
-
                 if !ticket.specialWork.isEmpty {
                     Section("Work type") {
                         LabeledContent("Special work") {
