@@ -80,6 +80,8 @@ final class ProcessACPChannel: ACPChannel, @unchecked Sendable {
         process.standardError = FileHandle.nullDevice
 
         try process.run()
+        // A write to a dead child must throw EPIPE, not raise SIGPIPE and kill the app.
+        _ = fcntl(input.fileHandleForWriting.fileDescriptor, F_SETNOSIGPIPE, 1)
 
         var buffer = Data()
         output.fileHandleForReading.readabilityHandler = { handle in
