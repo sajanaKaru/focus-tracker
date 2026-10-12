@@ -12,15 +12,38 @@ public enum CopilotLocator {
 
     private static let cache = Cache()
 
-    /// The Settings override wins; otherwise the CLI found through the user's login shell, then common install folders.
+    /// Settings override, then the cache, the process's own PATH, the user's login shell, and
+    /// finally common install folders. The login shell comes late because it can hang when the
+    /// app is launched from an interactive terminal.
     public static func locate(override: String?) async -> URL? {
         if let path = override?.trimmingCharacters(in: .whitespacesAndNewlines), !path.isEmpty {
-            return FileManager.default.isExecutableFile(atPath: path) ? URL(fileURLWithPath: path) : nil
+            let expanded = NSString(string: path).expandingTildeInPath
+            return isExecutableFile(expanded) ? URL(fileURLWithPath: expanded) : nil
         }
-        if let cached = cache.value, FileManager.default.isExecutableFile(atPath: cached.path) { return cached }
+        if let cached = cache.value, isExecutableFile(cached.path) { return cached }
+        if let onPath = executableOnPath() {
+            cache.value = onPath
+            return onPath
+        }
         let found = await Task.detached { detect() }.value
         cache.value = found
         return found
+    }
+
+    /// The first executable regular file called `name` in the absolute entries of `searchPath`.
+    static func executableOnPath(_ name: String = "copilot", searchPath: String? = ProcessInfo.processInfo.environment["PATH"]) -> URL? {
+        for entry in (searchPath ?? "").split(separator: ":", omittingEmptySubsequences: true) where entry.hasPrefix("/") {
+            let candidate = URL(fileURLWithPath: String(entry)).appendingPathComponent(name).path
+            if isExecutableFile(candidate) { return URL(fileURLWithPath: candidate) }
+        }
+        return nil
+    }
+
+    /// `isExecutableFile` is also true for directories.
+    private static func isExecutableFile(_ path: String) -> Bool {
+        var isDirectory: ObjCBool = false
+        return FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory)
+            && !isDirectory.boolValue && FileManager.default.isExecutableFile(atPath: path)
     }
 
     /// Shell start-up files may print banners, so only the last absolute path counts.
@@ -31,9 +54,9 @@ public enum CopilotLocator {
     }
 
     private static func detect() -> URL? {
-        if let path = shellLookup(), FileManager.default.isExecutableFile(atPath: path) { return URL(fileURLWithPath: path) }
+        if let path = shellLookup(), isExecutableFile(path) { return URL(fileURLWithPath: path) }
         let fallbacks = ["/opt/homebrew/bin/copilot", "/usr/local/bin/copilot", NSHomeDirectory() + "/.local/bin/copilot"]
-        return fallbacks.first { FileManager.default.isExecutableFile(atPath: $0) }.map { URL(fileURLWithPath: $0) }
+        return fallbacks.first { isExecutableFile($0) }.map { URL(fileURLWithPath: $0) }
     }
 
     /// Interactive login shell, so `.zshrc` (where nvm usually lives) is loaded. A Finder-launched app has no such PATH.
