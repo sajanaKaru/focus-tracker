@@ -43,7 +43,7 @@ public enum AIError: LocalizedError, Equatable {
     case rateLimited(AIProvider)
     case http(Int, AIProvider)
     case invalidModel
-    case modelNotFound(String, AIProvider)
+    case modelNotFound(String, AIProvider, String)
     case unreadableReply
     case noCases
 
@@ -54,7 +54,7 @@ public enum AIError: LocalizedError, Equatable {
         case .rateLimited(let p): "\(p.title) rate limit reached. Try again later."
         case .http(let code, let p): "\(p.title) returned HTTP \(code)."
         case .invalidModel: "The model name is not valid. Check it in Settings."
-        case .modelNotFound(let m, let p): "\(p.title) has no model \"\(m)\" (it may be retired). Change the model in Settings."
+        case .modelNotFound(let m, let p, let detail): "\(p.title) returned 404 for model \"\(m)\": \(detail)"
         case .unreadableReply: "The AI reply could not be read. Try again."
         case .noCases: "The AI returned no test cases."
         }
@@ -122,13 +122,19 @@ public struct AICaseClient: Sendable {
         case 200..<300: break
         case 401, 403: throw AIError.unauthorized(provider)
         case 429: throw AIError.rateLimited(provider)
-        case 404: throw AIError.modelNotFound(model, provider)
+        case 404: throw AIError.modelNotFound(model, provider, Self.errorDetail(data))
         default: throw AIError.http(response.statusCode, provider)
         }
         guard let text = replyText(data) else { throw AIError.unreadableReply }
         let cases = try Self.parseCases(text)
         guard !cases.isEmpty else { throw AIError.noCases }
         return cases
+    }
+
+    private static func errorDetail(_ data: Data) -> String {
+        let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        let message = (root?["error"] as? [String: Any])?["message"] as? String
+        return String((message ?? String(decoding: data, as: UTF8.self)).prefix(300))
     }
 
     // MARK: Requests

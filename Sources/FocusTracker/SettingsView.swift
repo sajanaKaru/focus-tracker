@@ -111,7 +111,7 @@ struct SettingsView: View {
                 ForEach(AIProvider.allCases) { Text($0.title).tag($0.rawValue) }
             }
             TextField("Model", text: $aiModel, prompt: Text(aiProvider.defaultModel))
-                .onSubmit { store.setAIModel(aiModel, for: aiProvider) }
+                .onChange(of: aiModel) { store.setAIModel(aiModel, for: aiProvider) }
             SecureField("\(aiProvider.title) API key", text: $aiKey)
             HStack {
                 Button("Save") { saveAIKey() }
