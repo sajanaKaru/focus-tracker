@@ -149,15 +149,21 @@ public struct CopilotACPClient: Sendable {
         defer { channel.close() }
         let conversation = ACPConversation(channel)
         let limit = timeout
-        return try await withThrowingTaskGroup(of: T.self) { group in
-            group.addTask { try await body(conversation, directory) }
-            group.addTask {
-                try await Task.sleep(nanoseconds: UInt64(limit * 1_000_000_000))
-                throw AIError.copilotFailed("The Copilot CLI did not respond in time.")
+        do {
+            return try await withThrowingTaskGroup(of: T.self) { group in
+                group.addTask { try await body(conversation, directory) }
+                group.addTask {
+                    try await Task.sleep(nanoseconds: UInt64(limit * 1_000_000_000))
+                    throw AIError.copilotFailed("The Copilot CLI did not respond in time.")
+                }
+                defer { group.cancelAll() }
+                guard let first = try await group.next() else { throw AIError.copilotFailed("The Copilot CLI did not reply.") }
+                return first
             }
-            defer { group.cancelAll() }
-            guard let first = try await group.next() else { throw AIError.copilotFailed("The Copilot CLI did not reply.") }
-            return first
+        } catch {
+            // A cancelled stream ends early, which would otherwise read as the CLI exiting.
+            if Task.isCancelled { throw CancellationError() }
+            throw error
         }
     }
 }

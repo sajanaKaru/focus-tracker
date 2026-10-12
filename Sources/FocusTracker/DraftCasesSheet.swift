@@ -14,6 +14,7 @@ struct DraftCasesSheet: View {
     @State private var drafts: [DraftCase] = []
     @State private var kept: Set<UUID> = []
     @State private var error: String?
+    @State private var generation: Task<Void, Never>?
 
     var body: some View {
         SheetScaffold(title: "Draft test cases", subtitle: ticket.displayKey + " · " + ticket.title, width: 720, height: 600) {
@@ -32,6 +33,7 @@ struct DraftCasesSheet: View {
             actions
         }
         .task { await loadPullRequests() }
+        .onDisappear { generation?.cancel() }
     }
 
     @ViewBuilder private var choosing: some View {
@@ -71,12 +73,12 @@ struct DraftCasesSheet: View {
     }
 
     @ViewBuilder private var actions: some View {
-        Button(role: .cancel) { dismiss() } label: { ShortcutLabel(title: "Cancel", keys: "⎋") }
+        Button(role: .cancel) { generation?.cancel(); dismiss() } label: { ShortcutLabel(title: "Cancel", keys: "⎋") }
             .buttonStyle(.secondary)
             .keyboardShortcut(.cancelAction)
         switch phase {
         case .choosing:
-            Button { Task { await generate() } } label: { ShortcutLabel(title: error == nil ? "Draft" : "Retry", keys: "↩") }
+            Button { generation = Task { await generate() } } label: { ShortcutLabel(title: error == nil ? "Draft" : "Retry", keys: "↩") }
                 .buttonStyle(.primary)
                 .keyboardShortcut(.defaultAction)
         case .review:
@@ -107,6 +109,7 @@ struct DraftCasesSheet: View {
             kept = Set(drafts.map(\.id))
             phase = .review
         } catch {
+            if error is CancellationError || Task.isCancelled { return }
             self.error = error.localizedDescription
             phase = .choosing
         }

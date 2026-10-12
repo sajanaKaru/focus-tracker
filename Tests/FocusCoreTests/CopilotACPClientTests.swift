@@ -157,4 +157,15 @@ final class CopilotACPClientTests: XCTestCase {
         }
         XCTAssertTrue(channel.closed)
     }
+
+    func testCancellingTheCallerThrowsCancellationAndClosesTheChannel() async {
+        let channel = ScriptedChannel { _, _ in [] }
+        let task = Task { try await client(channel, timeout: 5).availableModels() }
+        try? await Task.sleep(nanoseconds: 100_000_000)
+        task.cancel()
+        let result = await task.result
+        guard case .failure(let error) = result else { return XCTFail("expected failure") }
+        XCTAssertTrue(error is CancellationError, "got \(error)")
+        XCTAssertTrue(channel.closed)
+    }
 }
