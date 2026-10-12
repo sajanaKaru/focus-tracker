@@ -287,12 +287,7 @@ struct RootView: View {
             TicketPage(
                 ticketID: id,
                 onBack: { ticketPageID = nil },
-                onPlan: { planTicketID = id },
-                onShowLog: {
-                    logFilter = ActionLogFilter(ticketID: id)
-                    ticketPageID = nil
-                    selection = .actionLog
-                }
+                onPlan: { planTicketID = id }
             )
         } else {
             sidebarContent

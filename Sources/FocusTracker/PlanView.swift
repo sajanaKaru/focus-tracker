@@ -76,7 +76,7 @@ struct PlanPage: View {
     }
 }
 
-private struct PlanCommentRow: View {
+struct PlanCommentRow: View {
     @Environment(AppStore.self) private var store
     let comment: PlanComment
     let canPost: Bool
@@ -159,7 +159,7 @@ private struct EditPlanCommentSheet: View {
 }
 
 /// Adds a new comment to the plan.
-private struct PlanCommentComposer: View {
+struct PlanCommentComposer: View {
     @Environment(AppStore.self) private var store
     let ticketID: UUID
 
@@ -283,7 +283,7 @@ private struct PlanCommentEditor: View {
 }
 
 /// Shows the combined comment as it will appear on GitHub before sending it.
-private struct PostPlanSheet: View {
+struct PostPlanSheet: View {
     @Environment(AppStore.self) private var store
     @Environment(\.dismiss) private var dismiss
     let ticketID: UUID

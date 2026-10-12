@@ -126,7 +126,7 @@ extension TestResultStatus {
     }
 }
 
-private struct BugRow: View {
+struct BugRow: View {
     @Environment(AppStore.self) private var store
     let bug: BugReport
     @State private var retrying = false
