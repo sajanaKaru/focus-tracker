@@ -15,6 +15,7 @@ struct SettingsView: View {
     @AppStorage(PrefKey.defaultEstimateMinutes) private var defaultEstimateMinutes = 60
     @AppStorage(PrefKey.workDays) private var workDays = 5
     @AppStorage(PrefKey.aiProvider) private var aiProviderRaw = AIProvider.openAI.rawValue
+    @AppStorage(PrefKey.copilotPath) private var copilotPath = ""
 
     @FocusState private var focus: Field?
 
@@ -23,6 +24,9 @@ struct SettingsView: View {
     @State private var aiModel = ""
     @State private var aiHasKey = false
     @State private var aiMessage: String?
+    @State private var copilotModels: [CopilotModel] = []
+    @State private var copilotStatus: String?
+    @State private var copilotLoading = false
 
     @State private var token = ""
     @State private var hasToken = Keychain.get(account: Keychain.githubAccount) != nil
@@ -193,48 +197,96 @@ struct SettingsView: View {
                     ForEach(AIProvider.allCases) { Text($0.title).tag($0.rawValue) }
                 }
                 .onChange(of: aiProviderRaw) { loadAI() }
-                TextField("Model", text: $aiModel, prompt: Text(aiProvider.defaultModel))
-                    .onChange(of: aiModel) { store.setAIModel(aiModel, for: aiProvider) }
-                Text("Leave the model empty to use \(aiProvider.defaultModel).")
-                    .font(.caption).foregroundStyle(.secondary)
+                if aiProvider == .copilot {
+                    copilotModelPicker
+                } else {
+                    TextField("Model", text: $aiModel, prompt: Text(aiProvider.defaultModel))
+                        .onChange(of: aiModel) { store.setAIModel(aiModel, for: aiProvider) }
+                    Text("Leave the model empty to use \(aiProvider.defaultModel).")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
             }
 
-            Section("API key") {
-                SecureField("\(aiProvider.title) API key", text: $aiKey)
-                    .focused($focus, equals: .aiKey)
-                    .onSubmit { saveAIKey() }
-                HStack(spacing: 8) {
-                    if let aiMessage {
-                        Text(aiMessage).foregroundStyle(.secondary)
-                    } else if aiHasKey {
-                        Label("Key saved in the Keychain", systemImage: "checkmark.circle.fill").foregroundStyle(Theme.success)
-                    } else {
-                        Text("Paste a key and press Return to save it.").foregroundStyle(.secondary)
-                    }
-                    Spacer()
-                    if aiHasKey {
-                        Button("Remove key", role: .destructive) {
-                            Keychain.delete(account: aiProvider.keychainAccount)
-                            aiHasKey = false
-                            aiMessage = "Key removed."
+            if aiProvider == .copilot {
+                copilotSection
+            } else {
+                Section("API key") {
+                    SecureField("\(aiProvider.title) API key", text: $aiKey)
+                        .focused($focus, equals: .aiKey)
+                        .onSubmit { saveAIKey() }
+                    HStack(spacing: 8) {
+                        if let aiMessage {
+                            Text(aiMessage).foregroundStyle(.secondary)
+                        } else if aiHasKey {
+                            Label("Key saved in the Keychain", systemImage: "checkmark.circle.fill").foregroundStyle(Theme.success)
+                        } else {
+                            Text("Paste a key and press Return to save it.").foregroundStyle(.secondary)
                         }
-                        .buttonStyle(.secondary)
+                        Spacer()
+                        if aiHasKey {
+                            Button("Remove key", role: .destructive) {
+                                Keychain.delete(account: aiProvider.keychainAccount)
+                                aiHasKey = false
+                                aiMessage = "Key removed."
+                            }
+                            .buttonStyle(.secondary)
+                        }
                     }
+                    .font(.callout)
+                    Text("Drafting sends the ticket text and linked pull requests' titles, descriptions and changed file names to the selected provider. Keys are stored in the macOS Keychain.")
+                        .font(.caption).foregroundStyle(.secondary)
                 }
-                .font(.callout)
-                Text("Drafting sends the ticket text and linked pull requests' titles, descriptions and changed file names to the selected provider. Keys are stored in the macOS Keychain.")
-                    .font(.caption).foregroundStyle(.secondary)
             }
         }
         .formStyle(.grouped)
         .onAppear { loadAI() }
     }
 
+    private var copilotModelPicker: some View {
+        Picker("Model", selection: $aiModel) {
+            Text("Auto").tag("")
+            if !aiModel.isEmpty, !copilotModels.isEmpty, !copilotModels.contains(where: { $0.id == aiModel }) {
+                Text("\(aiModel) (not enabled)").tag(aiModel)
+            }
+            ForEach(copilotModels.filter { $0.id != "auto" }) { Text($0.label).tag($0.id) }
+        }
+        .onChange(of: aiModel) { store.setAIModel(aiModel, for: aiProvider) }
+    }
+
+    private var copilotSection: some View {
+        Section("GitHub Copilot") {
+            TextField("CLI path", text: $copilotPath, prompt: Text("Detected automatically"))
+            HStack(spacing: 8) {
+                Button("Refresh models") { Task { await loadCopilotModels() } }
+                    .buttonStyle(.secondary)
+                    .disabled(copilotLoading)
+                if copilotLoading { ProgressView().controlSize(.small) }
+                if let copilotStatus { Text(copilotStatus).foregroundStyle(.secondary) }
+            }
+            .font(.callout)
+            Text("Uses the models enabled for your Copilot account through the Copilot CLI. Sign in once with `copilot login` in a terminal; the GitHub token saved in this app is not used. Drafting sends the ticket text and linked pull requests' titles, descriptions and changed file names to GitHub Copilot.")
+                .font(.caption).foregroundStyle(.secondary)
+        }
+    }
+
     private func loadAI() {
         aiModel = store.aiModel(for: aiProvider) == aiProvider.defaultModel ? "" : store.aiModel(for: aiProvider)
-        aiHasKey = Keychain.get(account: aiProvider.keychainAccount) != nil
+        aiHasKey = aiProvider.usesAPIKey && Keychain.get(account: aiProvider.keychainAccount) != nil
         aiKey = ""
         aiMessage = nil
+        if aiProvider == .copilot { Task { await loadCopilotModels() } }
+    }
+
+    private func loadCopilotModels() async {
+        copilotLoading = true
+        copilotStatus = nil
+        defer { copilotLoading = false }
+        do {
+            copilotModels = try await store.copilotModels()
+            copilotStatus = "\(copilotModels.filter { $0.id != "auto" }.count) models enabled"
+        } catch {
+            copilotStatus = error.localizedDescription
+        }
     }
 
     private func saveAIKey() {

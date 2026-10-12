@@ -40,7 +40,7 @@ struct TicketQASection: View {
             Button { addingCase = true } label: { Label("Add test case", systemImage: "plus") }
             Button { drafting = true } label: { Label("Draft test cases with AI", systemImage: "sparkles") }
                 .disabled(!store.hasAIKey)
-                .help(store.hasAIKey ? "Draft cases from the ticket and its pull requests" : "Add an AI API key in Settings")
+                .help(store.hasAIKey ? "Draft cases from the ticket and its pull requests" : "Set up an AI provider in Settings")
 
             HStack {
                 Button { verdict = .pass } label: { Label("Mark passed", systemImage: "checkmark.circle") }
