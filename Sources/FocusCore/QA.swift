@@ -167,6 +167,28 @@ public struct BugReport: Identifiable, Codable, Hashable, Sendable {
     }
 }
 
+/// A QA test plan for one GitHub milestone; its tickets and progress are derived, only the choices QA made are stored.
+public struct QAMilestonePlan: Identifiable, Codable, Hashable, Sendable {
+    public var id: UUID
+    public var milestone: String
+    public var targetDate: Date?
+    public var excludedTicketIDs: [UUID]
+    public var archived: Bool
+    public var createdAt: Date
+
+    public init(
+        id: UUID = UUID(), milestone: String, targetDate: Date? = nil, excludedTicketIDs: [UUID] = [],
+        archived: Bool = false, createdAt: Date = Date()
+    ) {
+        self.id = id
+        self.milestone = milestone
+        self.targetDate = targetDate
+        self.excludedTicketIDs = excludedTicketIDs
+        self.archived = archived
+        self.createdAt = createdAt
+    }
+}
+
 public enum QAState: Equatable, Sendable {
     case noCases, ready, testing, failed, verified
 }

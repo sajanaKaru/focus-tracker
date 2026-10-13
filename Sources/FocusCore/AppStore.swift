@@ -53,6 +53,7 @@ public final class AppStore {
     public private(set) var dayPlans: [DayPlan] = []
     /// Kept apart from `dayPlans` so a QA plan and a Dev plan for the same day never mix.
     public internal(set) var qaDayPlans: [DayPlan] = []
+    public internal(set) var qaMilestonePlans: [QAMilestonePlan] = []
     public private(set) var actionLog: [ActionLogEntry] = []
     public internal(set) var testCases: [TestCase] = []
     public internal(set) var testResults: [TestResult] = []
@@ -1445,6 +1446,7 @@ public final class AppStore {
         var testVerdicts: [TestVerdict]?
         var bugReports: [BugReport]?
         var qaDayPlans: [DayPlan]?
+        var qaMilestonePlans: [QAMilestonePlan]?
     }
 
     /// Older files stored one free-text `notes` string per ticket.
@@ -1512,6 +1514,7 @@ public final class AppStore {
         testVerdicts = snapshot.testVerdicts ?? []
         bugReports = snapshot.bugReports ?? []
         qaDayPlans = snapshot.qaDayPlans ?? []
+        qaMilestonePlans = snapshot.qaMilestonePlans ?? []
         if let saved = snapshot.notes {
             notes = saved
         } else {
@@ -1535,7 +1538,7 @@ public final class AppStore {
             let snapshot = Snapshot(
                 tickets: tickets, entries: entries, notes: notes, planComments: planComments, activities: activities, dayPlans: dayPlans,
                 actionLog: actionLog, remoteOptions: remoteOptions, testCases: testCases, testResults: testResults,
-                testVerdicts: testVerdicts, bugReports: bugReports, qaDayPlans: qaDayPlans
+                testVerdicts: testVerdicts, bugReports: bugReports, qaDayPlans: qaDayPlans, qaMilestonePlans: qaMilestonePlans
             )
             let data = try encoder.encode(snapshot)
             try data.write(to: storeURL, options: .atomic)
