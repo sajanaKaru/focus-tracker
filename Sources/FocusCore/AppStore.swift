@@ -18,6 +18,9 @@ public enum PrefKey {
     public static let aiProvider = "aiProvider"
     public static let aiModelPrefix = "aiModel."
     public static let aiIncludeCode = "aiIncludeCode"
+    public static let aiRepoAccess = "aiRepoAccess"
+    public static let aiScanGitHub = "aiScanGitHub"
+    public static let aiReposFolder = "aiReposFolder"
     public static let copilotPath = "copilotPath"
 }
 

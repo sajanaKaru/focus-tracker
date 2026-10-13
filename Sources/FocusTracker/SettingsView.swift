@@ -17,6 +17,9 @@ struct SettingsView: View {
     @AppStorage(PrefKey.aiProvider) private var aiProviderRaw = AIProvider.openAI.rawValue
     @AppStorage(PrefKey.copilotPath) private var copilotPath = ""
     @AppStorage(PrefKey.aiIncludeCode) private var aiIncludeCode = false
+    @AppStorage(PrefKey.aiRepoAccess) private var aiRepoAccess = false
+    @AppStorage(PrefKey.aiScanGitHub) private var aiScanGitHub = false
+    @AppStorage(PrefKey.aiReposFolder) private var aiReposFolder = ""
 
     @FocusState private var focus: Field?
 
@@ -243,6 +246,9 @@ struct SettingsView: View {
                 Toggle("Send PR code changes", isOn: $aiIncludeCode)
                 Text("Adds the code changes (diffs) of linked pull requests to the prompt so cases match what actually changed. Up to about 24,000 characters; lockfiles, generated files and images are skipped. They are sent to \(aiProvider.title) along with the ticket text. Off by default.")
                     .font(.caption).foregroundStyle(.secondary)
+                Toggle("Scan the GitHub repository", isOn: $aiScanGitHub)
+                Text("Reads related files straight from GitHub, with no local checkout: the AI picks up to 8 files (callers, helpers, tests) from the repository's file list, and their text, about 30,000 characters at most, is added to the prompt and sent to \(aiProvider.title). Uses the pull request's latest commit, skips lockfiles, generated files and secrets, and costs one extra AI request. Off by default.")
+                    .font(.caption).foregroundStyle(.secondary)
             }
         }
         .formStyle(.grouped)
@@ -273,7 +279,24 @@ struct SettingsView: View {
             .font(.callout)
             Text("Uses the models enabled for your Copilot account through the Copilot CLI. Sign in once with `copilot login` in a terminal; the GitHub token saved in this app is not used. Drafting sends the ticket text and linked pull requests' titles, descriptions and changed file names to GitHub Copilot.")
                 .font(.caption).foregroundStyle(.secondary)
+            Toggle("Let Copilot read local repositories", isOn: $aiRepoAccess)
+            if aiRepoAccess {
+                HStack {
+                    TextField("Repositories folder", text: $aiReposFolder, prompt: Text("e.g. ~/Developer"))
+                    Button("Choose…") { chooseReposFolder() }.buttonStyle(.secondary)
+                }
+            }
+            Text("Copilot works inside the local checkout of the pull request's repository (<folder>/<repo> or <folder>/<owner>/<repo>) and can read its files to find callers and related code. Reads are read-only, limited to that checkout, and skip .git, .env and key files; every other action is refused. Files it reads are sent to GitHub Copilot. The checkout may not be on the pull request's branch. Off by default.")
+                .font(.caption).foregroundStyle(.secondary)
         }
+    }
+
+    private func chooseReposFolder() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.prompt = "Choose"
+        if panel.runModal() == .OK, let url = panel.url { aiReposFolder = url.path }
     }
 
     private func loadAI() {

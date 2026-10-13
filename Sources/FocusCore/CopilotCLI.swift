@@ -39,12 +39,23 @@ struct ACPSession {
 /// One JSON-RPC conversation. Not reentrant: one request at a time.
 final class ACPConversation: @unchecked Sendable {
     private let channel: ACPChannel
+    private let readRoot: URL?
     private var iterator: AsyncThrowingStream<Data, Error>.AsyncIterator
     private var nextID = 0
-    private(set) var text = ""
+    private var segments = [""]
 
-    init(_ channel: ACPChannel) {
+    /// Everything the agent said.
+    var text: String { segments.joined() }
+
+    /// The last stretch of text with JSON in it (the answer comes after any tool calls), else everything.
+    var answer: String {
+        segments.last { !AICaseClient.jsonCandidates(in: $0).isEmpty } ?? text
+    }
+
+    /// With a `readRoot`, read-only tool calls inside it are approved; everything else is refused.
+    init(_ channel: ACPChannel, readRoot: URL? = nil) {
         self.channel = channel
+        self.readRoot = readRoot
         iterator = channel.lines.makeAsyncIterator()
     }
 
@@ -77,15 +88,26 @@ final class ACPConversation: @unchecked Sendable {
         let id = message["id"]
         if method == "session/update", id == nil {
             let update = (message["params"] as? [String: Any])?["update"] as? [String: Any]
-            if update?["sessionUpdate"] as? String == "agent_message_chunk",
-               let chunk = (update?["content"] as? [String: Any])?["text"] as? String {
-                text += chunk
+            let type = update?["sessionUpdate"] as? String
+            if type == "agent_message_chunk", let chunk = (update?["content"] as? [String: Any])?["text"] as? String {
+                segments[segments.count - 1] += chunk
+            } else if type == "tool_call" {
+                segments.append("")
             }
         } else if let id, method == "session/request_permission" {
-            try write(["jsonrpc": "2.0", "id": id, "result": ["outcome": ["outcome": "cancelled"]]])
+            try write(["jsonrpc": "2.0", "id": id, "result": ["outcome": permissionOutcome(message["params"])]])
         } else if let id {
             try write(["jsonrpc": "2.0", "id": id, "error": ["code": -32601, "message": "Method not supported"]])
         }
+    }
+
+    private func permissionOutcome(_ params: Any?) -> [String: Any] {
+        guard let root = readRoot, let params = params as? [String: Any],
+              let call = params["toolCall"] as? [String: Any], RepoReadPolicy.allows(call, root: root),
+              let options = params["options"] as? [[String: Any]],
+              let allow = options.first(where: { $0["kind"] as? String == "allow_once" })?["optionId"] as? String
+        else { return ["outcome": "cancelled"] }
+        return ["outcome": "selected", "optionId": allow]
     }
 
     private func write(_ object: [String: Any]) throws {
@@ -119,19 +141,30 @@ public struct CopilotACPClient: Sendable {
         }
     }
 
-    public func draftCases(_ prompt: DraftPrompt, model: String) async throws -> [DraftCase] {
-        let text = try await run { conversation, directory in
+    /// With a `repository`, Copilot works inside that checkout and may read it (read-only); otherwise it gets an empty folder and no tools.
+    public func draftCases(_ prompt: DraftPrompt, model: String, repository: URL? = nil) async throws -> [DraftCase] {
+        let text = try await complete(prompt, model: model, repository: repository)
+        let cases = try AICaseClient.parseCases(text, regression: prompt.regression)
+        guard !cases.isEmpty else { throw AIError.noCases }
+        return cases
+    }
+
+    /// The raw reply text.
+    public func complete(_ prompt: DraftPrompt, model: String, repository: URL? = nil) async throws -> String {
+        try await run(repository: repository) { conversation, directory in
             let session = try await conversation.start(directory: directory)
             if let target = Self.modelToSelect(model, in: session.models) {
                 _ = try await conversation.request("session/set_model", ["sessionId": session.id, "modelId": target])
             }
-            let message = prompt.system + "\n\n" + prompt.user + "\n\nDo not use tools or read files; answer from the text above."
+            let closing = repository == nil
+                ? "Do not use tools or read files; answer from the text above."
+                : "You are inside a local checkout of the repository. Use read-only tools to read the files you need, such as callers and related code of what changed. "
+                    + "The checkout may not be on the pull request's branch, so trust the code changes above where they differ. "
+                    + "Never modify files or run commands. When you are done, reply with the JSON only."
+            let message = prompt.system + "\n\n" + prompt.user + "\n\n" + closing
             _ = try await conversation.request("session/prompt", ["sessionId": session.id, "prompt": [["type": "text", "text": message]]])
-            return conversation.text
+            return conversation.answer
         }
-        let cases = try AICaseClient.parseCases(text, regression: prompt.regression)
-        guard !cases.isEmpty else { throw AIError.noCases }
-        return cases
     }
 
     /// The saved model if enabled, else `auto` if offered, else nil (keep the account default).
@@ -140,15 +173,16 @@ public struct CopilotACPClient: Sendable {
         return models.contains(where: { $0.id == "auto" }) ? "auto" : nil
     }
 
-    private func run<T: Sendable>(_ body: @escaping @Sendable (ACPConversation, URL) async throws -> T) async throws -> T {
-        let directory = FileManager.default.temporaryDirectory
+    private func run<T: Sendable>(repository: URL? = nil, _ body: @escaping @Sendable (ACPConversation, URL) async throws -> T) async throws -> T {
+        let directory = repository ?? FileManager.default.temporaryDirectory
             .appendingPathComponent("focustracker-copilot-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: directory) }
+        if repository == nil { try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true) }
+        // Only the scratch folder is ever removed, never the user's checkout.
+        defer { if repository == nil { try? FileManager.default.removeItem(at: directory) } }
         let channel = try open(directory)
         defer { channel.close() }
-        let conversation = ACPConversation(channel)
-        let limit = timeout
+        let conversation = ACPConversation(channel, readRoot: repository)
+        let limit = repository == nil ? timeout : timeout * 3
         do {
             return try await withThrowingTaskGroup(of: T.self) { group in
                 group.addTask { try await body(conversation, directory) }

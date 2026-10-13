@@ -143,7 +143,7 @@ final class CopilotACPClientTests: XCTestCase {
             _ = try await client(channel).draftCases(prompt, model: "auto")
             XCTFail("expected failure")
         } catch {
-            XCTAssertEqual(error as? AIError, .unreadableReply)
+            XCTAssertEqual(error as? AIError, .unreadableReply("sorry, I can't"))
         }
     }
 

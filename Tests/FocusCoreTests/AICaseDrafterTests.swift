@@ -107,8 +107,33 @@ final class AICaseDrafterTests: XCTestCase {
             _ = try await draft(.openAI, text: "sorry, I can't")
             XCTFail("expected failure")
         } catch {
-            XCTAssertEqual(error as? AIError, .unreadableReply)
+            XCTAssertEqual(error as? AIError, .unreadableReply("sorry, I can't"))
         }
+    }
+
+    func testUnreadableErrorShowsTheStartOfTheReply() {
+        let message = AIError.unreadableReply(AIError.preview("line one\nline two " + String(repeating: "x", count: 400))).localizedDescription
+        XCTAssertTrue(message.contains("line one line two"))
+        XCTAssertLessThan(message.count, 300)
+    }
+
+    func testFindsTheJSONAmongStrayBracketsAndBraces() throws {
+        let text = """
+        Analyzing [regression] risks for {Login}. Here you go:
+        ```json
+        {"cases":[{"title":"Old login breaks","steps":["Open",2],"expected":["In","Out"]}]}
+        ```
+        Note: see [1] and {done}.
+        """
+        let parsed = try AICaseClient.parseCases(text)
+        XCTAssertEqual(parsed.map(\.title), ["Old login breaks"])
+        XCTAssertEqual(parsed[0].steps, "1. Open\n2. 2")
+        XCTAssertEqual(parsed[0].expected, "In\nOut")
+    }
+
+    func testBracesInsideStringsDoNotBreakTheMatch() throws {
+        let text = #"{"cases":[{"title":"Handles } and ] in names","steps":"Type \"{\""}]}"#
+        XCTAssertEqual(try AICaseClient.parseCases(text).map(\.title), ["Handles } and ] in names"])
     }
 
     func testEmptyCaseListFails() async {

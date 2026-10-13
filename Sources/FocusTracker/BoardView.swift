@@ -9,7 +9,7 @@ struct BoardView: View {
 
     var body: some View {
         let columns = store.boardColumns
-        let tickets = store.tickets(matching: filter)
+        let tickets = store.boardTickets(matching: filter)
         ScrollView(.horizontal) {
             HStack(alignment: .top, spacing: 14) {
                 ForEach(columns) { column in

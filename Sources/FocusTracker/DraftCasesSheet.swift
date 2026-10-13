@@ -5,6 +5,8 @@ struct DraftCasesSheet: View {
     @Environment(AppStore.self) private var store
     @Environment(\.dismiss) private var dismiss
     @AppStorage(PrefKey.aiIncludeCode) private var includeCode = false
+    @AppStorage(PrefKey.aiRepoAccess) private var repoAccess = false
+    @AppStorage(PrefKey.aiScanGitHub) private var scanGitHub = false
     let ticket: Ticket
     var regression = false
     private enum Phase { case loadingPRs, choosing, generating, review }
@@ -54,10 +56,19 @@ struct DraftCasesSheet: View {
                 }
             }
         }
+        let readsLocal = repoAccess && store.aiProvider == .copilot
         Text(includeCode
             ? "The ticket text, the chosen pull requests' titles, descriptions, changed file names and code changes (diffs) are sent to \(store.aiProvider.title)."
-            : "The ticket text, the chosen pull requests' titles, descriptions and changed file names are sent to \(store.aiProvider.title). Source code is not sent.")
+            : "The ticket text, the chosen pull requests' titles, descriptions and changed file names are sent to \(store.aiProvider.title)." + (scanGitHub || readsLocal ? "" : " Source code is not sent."))
             .font(.caption).foregroundStyle(.secondary)
+        if scanGitHub {
+            Text("Related files from the pull requests' repositories on GitHub are also read and sent to \(store.aiProvider.title).")
+                .font(.caption).foregroundStyle(.secondary)
+        }
+        if readsLocal {
+            Text("Copilot may also read files from the local checkout of the repository, read-only, and those files are sent to GitHub Copilot.")
+                .font(.caption).foregroundStyle(.secondary)
+        }
     }
 
     @ViewBuilder private var review: some View {

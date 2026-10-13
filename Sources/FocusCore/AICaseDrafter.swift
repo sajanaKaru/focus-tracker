@@ -53,7 +53,7 @@ public enum AIError: LocalizedError, Equatable {
     case http(Int, AIProvider)
     case invalidModel
     case modelNotFound(String, AIProvider, String)
-    case unreadableReply
+    case unreadableReply(String)
     case noCases
     case copilotNotInstalled
     case copilotNotSignedIn
@@ -68,13 +68,20 @@ public enum AIError: LocalizedError, Equatable {
         case .http(let code, let p): "\(p.title) returned HTTP \(code)."
         case .invalidModel: "The model name is not valid. Check it in Settings."
         case .modelNotFound(let m, let p, let detail): "\(p.title) returned 404 for model \"\(m)\": \(detail)"
-        case .unreadableReply: "The AI reply could not be read. Try again."
+        case .unreadableReply(let preview):
+            preview.isEmpty ? "The AI reply could not be read. Try again." : "The AI reply could not be read. It said: \"\(preview)\""
         case .noCases: "The AI returned no test cases."
         case .copilotNotInstalled: "GitHub Copilot CLI not found. Install it or set its path in Settings."
         case .copilotNotSignedIn: "Run `copilot login` in a terminal, then try again."
         case .copilotNoEnabledModels: "Your GitHub Copilot account has no enabled models."
         case .copilotFailed(let message): "GitHub Copilot: \(message)"
         }
+    }
+
+    /// The start of an unreadable reply, on one line, for the error message.
+    static func preview(_ text: String) -> String {
+        let flat = text.split(whereSeparator: \.isNewline).joined(separator: " ").trimmingCharacters(in: .whitespaces)
+        return flat.count > 200 ? String(flat.prefix(200)) + "…" : flat
     }
 }
 
@@ -170,7 +177,7 @@ public struct DraftPrompt: Equatable, Sendable {
     ]
     private static let noiseFolders: Set<String> = ["node_modules", "dist", "pods", ".build"]
 
-    private static func isNoise(_ path: String) -> Bool {
+    static func isNoise(_ path: String) -> Bool {
         let lower = path.lowercased()
         let parts = lower.split(separator: "/").map(String.init)
         guard let name = parts.last else { return true }
@@ -196,7 +203,8 @@ public struct AICaseClient: Sendable {
         self.transport = transport
     }
 
-    public func draftCases(_ prompt: DraftPrompt) async throws -> [DraftCase] {
+    /// The model's raw reply text.
+    public func complete(_ prompt: DraftPrompt) async throws -> String {
         let request = try makeRequest(prompt)
         let (data, response) = try await transport.send(request)
         switch response.statusCode {
@@ -206,8 +214,12 @@ public struct AICaseClient: Sendable {
         case 404: throw AIError.modelNotFound(model, provider, Self.errorDetail(data))
         default: throw AIError.http(response.statusCode, provider)
         }
-        guard let text = replyText(data) else { throw AIError.unreadableReply }
-        let cases = try Self.parseCases(text, regression: prompt.regression)
+        guard let text = replyText(data) else { throw AIError.unreadableReply("") }
+        return text
+    }
+
+    public func draftCases(_ prompt: DraftPrompt) async throws -> [DraftCase] {
+        let cases = try Self.parseCases(try await complete(prompt), regression: prompt.regression)
         guard !cases.isEmpty else { throw AIError.noCases }
         return cases
     }
@@ -284,39 +296,73 @@ public struct AICaseClient: Sendable {
 
     /// Accepts `{"cases":[…]}` or a bare array, inside optional prose or code fences.
     static func parseCases(_ text: String, regression: Bool = false) throws -> [DraftCase] {
-        guard let json = jsonSlice(of: text), let data = json.data(using: .utf8),
-              let value = try? JSONSerialization.jsonObject(with: data) else { throw AIError.unreadableReply }
-        let items: [[String: Any]]
-        if let array = value as? [[String: Any]] {
-            items = array
-        } else if let object = value as? [String: Any], let array = object["cases"] as? [[String: Any]] {
-            items = array
-        } else {
-            throw AIError.unreadableReply
+        for candidate in jsonCandidates(in: text) {
+            guard let data = candidate.data(using: .utf8), let value = try? JSONSerialization.jsonObject(with: data) else { continue }
+            let items: [[String: Any]]
+            if let array = value as? [[String: Any]] {
+                items = array
+            } else if let object = value as? [String: Any], let array = object["cases"] as? [[String: Any]] {
+                items = array
+            } else {
+                continue
+            }
+            return items.compactMap { item in
+                let title = (item["title"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                guard !title.isEmpty else { return nil }
+                return DraftCase(
+                    title: title, steps: stepsText(item["steps"]), expected: plainText(item["expected"]),
+                    risk: regression ? plainText(item["risk"]) : "", isRegression: regression
+                )
+            }
         }
-        return items.compactMap { item in
-            let title = (item["title"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            guard !title.isEmpty else { return nil }
-            return DraftCase(
-                title: title, steps: stepsText(item["steps"]), expected: (item["expected"] as? String) ?? "",
-                risk: regression ? ((item["risk"] as? String) ?? "") : "", isRegression: regression
-            )
-        }
+        throw AIError.unreadableReply(AIError.preview(text))
+    }
+
+    private static func plainText(_ value: Any?) -> String {
+        if let text = value as? String { return text }
+        guard let list = value as? [Any] else { return "" }
+        return list.map { "\($0)" }.joined(separator: "\n")
     }
 
     private static func stepsText(_ value: Any?) -> String {
         if let text = value as? String { return text }
-        guard let list = value as? [String] else { return "" }
+        guard let list = value as? [Any] else { return "" }
         return list.enumerated().map { "\($0.offset + 1). \($0.element)" }.joined(separator: "\n")
     }
 
-    private static func jsonSlice(of text: String) -> String? {
-        let openers: [(Character, Character)] = [("{", "}"), ("[", "]")]
-        let candidates = openers.compactMap { open, close -> (String.Index, String.Index)? in
-            guard let start = text.firstIndex(of: open), let end = text.lastIndex(of: close), start < end else { return nil }
-            return (start, end)
+    /// Every balanced `{…}` or `[…]` in the text, in order, so prose or stray brackets around the JSON don't hide it.
+    static func jsonCandidates(in text: String) -> [String] {
+        let chars = Array(text)
+        var result: [String] = []
+        var i = 0
+        while i < chars.count {
+            guard chars[i] == "{" || chars[i] == "[", let end = balancedEnd(chars, from: i) else { i += 1; continue }
+            result.append(String(chars[i...end]))
+            i = end + 1
         }
-        guard let best = candidates.min(by: { $0.0 < $1.0 }) else { return nil }
-        return String(text[best.0...best.1])
+        return result
+    }
+
+    private static func balancedEnd(_ chars: [Character], from start: Int) -> Int? {
+        var stack: [Character] = []
+        var inString = false
+        var escaped = false
+        for i in start..<chars.count {
+            let c = chars[i]
+            if inString {
+                if escaped { escaped = false } else if c == "\\" { escaped = true } else if c == "\"" { inString = false }
+                continue
+            }
+            switch c {
+            case "\"": inString = true
+            case "{": stack.append("}")
+            case "[": stack.append("]")
+            case "}", "]":
+                guard stack.popLast() == c else { return nil }
+                if stack.isEmpty { return i }
+            default: break
+            }
+        }
+        return nil
     }
 }
