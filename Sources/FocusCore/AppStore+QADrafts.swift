@@ -41,7 +41,7 @@ extension AppStore {
     }
 
     /// Asks the configured AI provider for draft cases. Nothing is saved; see `addDrafts`.
-    public func draftTestCases(ticketID: UUID, pullRequests: [LinkedPullRequest]) async throws -> [DraftCase] {
+    public func draftTestCases(ticketID: UUID, pullRequests: [LinkedPullRequest], regression: Bool = false) async throws -> [DraftCase] {
         let provider = aiProvider
         let key = aiKey(for: provider)
         if provider.usesAPIKey, key == nil { throw AIError.missingKey(provider) }
@@ -61,7 +61,8 @@ extension AppStore {
                 details.append(detail)
             }
         }
-        let prompt = DraftPrompt.make(ticketKey: ticket.displayKey, title: ticket.title, body: ticket.body, pullRequests: details)
+        let make = regression ? DraftPrompt.makeRegression : DraftPrompt.make
+        let prompt = make(ticket.displayKey, ticket.title, ticket.body, details)
         if provider == .copilot {
             return try await copilotClient().draftCases(prompt, model: aiModel(for: provider))
         }
@@ -85,6 +86,8 @@ extension AppStore {
     /// Saves the chosen drafts as test cases; returns how many were added.
     @discardableResult
     public func addDrafts(ticketID: UUID, _ drafts: [DraftCase]) -> Int {
-        drafts.reduce(0) { $0 + (addTestCase(ticketID: ticketID, title: $1.title, steps: $1.steps, expected: $1.expected) == nil ? 0 : 1) }
+        drafts.reduce(0) {
+            $0 + (addTestCase(ticketID: ticketID, title: $1.title, steps: $1.steps, expected: $1.expected, risk: $1.risk, isRegression: $1.isRegression) == nil ? 0 : 1)
+        }
     }
 }

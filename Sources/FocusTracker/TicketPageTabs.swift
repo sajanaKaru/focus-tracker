@@ -6,16 +6,20 @@ import SwiftUI
 struct TicketTestCasesTab: View {
     @Environment(AppStore.self) private var store
     let ticket: Ticket
+    /// Shows the regression cases instead of the regular ones.
+    var regression = false
     @State private var environment: DeploymentEnvironment?
     @State private var loaded = false
     @State private var editingCase: TestCase?
     @State private var addingCase = false
     @State private var drafting = false
+    @State private var findingRegressions = false
     @State private var verdict: VerdictOutcome?
     @State private var reportingBug = false
 
     var body: some View {
-        let cases = store.testCases(for: ticket.id)
+        let allCases = store.testCases(for: ticket.id)
+        let cases = allCases.filter { $0.isRegression == regression }
         VStack(alignment: .leading, spacing: 16) {
             if ticket.github == nil {
                 EmptyTabState(
@@ -24,17 +28,22 @@ struct TicketTestCasesTab: View {
                 )
             } else {
                 environmentPicker
-                summaryCard(caseCount: cases.count)
-                actions(hasCases: !cases.isEmpty)
+                summaryCard(cases: cases)
+                actions(hasCases: !allCases.isEmpty)
                 if cases.isEmpty {
                     EmptyTabState(
-                        symbol: "checklist", title: "No test cases yet",
-                        message: "Write them by hand, or let AI draft them from the ticket and its pull requests."
+                        symbol: regression ? "arrow.triangle.2.circlepath" : "checklist",
+                        title: regression ? "No regression cases yet" : "No test cases yet",
+                        message: regression
+                            ? "Let AI find what this change could break, with steps to reproduce, or write regression cases by hand."
+                            : "Write them by hand, or let AI draft them from the ticket and its pull requests."
                     ) {
-                        Button { addingCase = true } label: { Label("Add test case", systemImage: "plus") }.buttonStyle(.primary)
-                        Button { drafting = true } label: { Label("Draft with AI", systemImage: "sparkles") }
-                            .buttonStyle(.secondary)
-                            .disabled(!store.hasAIKey)
+                        Button { addingCase = true } label: { Label(regression ? "Add regression case" : "Add test case", systemImage: "plus") }.buttonStyle(.primary)
+                        Button { regression ? (findingRegressions = true) : (drafting = true) } label: {
+                            Label(regression ? "Find regressions" : "Draft with AI", systemImage: "sparkles")
+                        }
+                        .buttonStyle(.secondary)
+                        .disabled(!store.hasAIKey)
                     }
                 } else {
                     ForEach(Array(cases.enumerated()), id: \.element.id) { index, testCase in
@@ -58,8 +67,9 @@ struct TicketTestCasesTab: View {
             environment = ticket.environment
         }
         .onChange(of: ticket.environment) { environment = ticket.environment }
-        .sheet(isPresented: $addingCase) { TestCaseSheet(ticketID: ticket.id, existing: nil) }
+        .sheet(isPresented: $addingCase) { TestCaseSheet(ticketID: ticket.id, existing: nil, startsAsRegression: regression) }
         .sheet(isPresented: $drafting) { DraftCasesSheet(ticket: ticket) }
+        .sheet(isPresented: $findingRegressions) { DraftCasesSheet(ticket: ticket, regression: true) }
         .sheet(item: $editingCase) { TestCaseSheet(ticketID: ticket.id, existing: $0) }
         .sheet(item: $verdict) { VerdictSheet(ticket: ticket, environment: environment, outcome: $0) }
         .sheet(isPresented: $reportingBug) { BugSheet(ticket: ticket, defaultEnvironment: environment) }
@@ -79,8 +89,9 @@ struct TicketTestCasesTab: View {
         }
     }
 
-    private func summaryCard(caseCount: Int) -> some View {
-        let summary = store.qaSummary(ticketID: ticket.id, environment: environment)
+    private func summaryCard(cases: [TestCase]) -> some View {
+        let caseCount = cases.count
+        let summary = QA.summary(cases: cases, results: store.testResults.filter { $0.ticketID == ticket.id }, environment: environment)
         let state = store.qaState(ticketID: ticket.id, environment: environment)
         return VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 10) {
@@ -121,11 +132,18 @@ struct TicketTestCasesTab: View {
 
     private func actions(hasCases: Bool) -> some View {
         FlowLayout {
-            Button { addingCase = true } label: { Label("Add test case", systemImage: "plus") }.buttonStyle(.primary)
-            Button { drafting = true } label: { Label("Draft with AI", systemImage: "sparkles") }
-                .buttonStyle(.secondary)
-                .disabled(!store.hasAIKey)
-                .help(store.hasAIKey ? "Draft cases from the ticket and its pull requests" : "Set up an AI provider in Settings")
+            Button { addingCase = true } label: { Label(regression ? "Add regression case" : "Add test case", systemImage: "plus") }.buttonStyle(.primary)
+            if regression {
+                Button { findingRegressions = true } label: { Label("Find regressions", systemImage: "sparkles") }
+                    .buttonStyle(.secondary)
+                    .disabled(!store.hasAIKey)
+                    .help(store.hasAIKey ? "Identify what this change could break, with steps to reproduce" : "Set up an AI provider in Settings")
+            } else {
+                Button { drafting = true } label: { Label("Draft with AI", systemImage: "sparkles") }
+                    .buttonStyle(.secondary)
+                    .disabled(!store.hasAIKey)
+                    .help(store.hasAIKey ? "Draft cases from the ticket and its pull requests" : "Set up an AI provider in Settings")
+            }
             Button { verdict = .pass } label: { Label("Mark passed", systemImage: "checkmark.circle") }
                 .buttonStyle(.secondary)
                 .disabled(!hasCases)
@@ -184,12 +202,14 @@ private struct TestCaseCard: View {
                     .frame(width: 24, height: 24)
                     .background(accent.opacity(0.15), in: Circle())
                 Text(testCase.title).font(.headline).textSelection(.enabled)
+                if testCase.isRegression { Chip(text: "Regression", color: Theme.warning) }
                 Spacer()
                 Chip(text: current?.status.title ?? "Not run", color: accent)
                 Button(action: edit) { Image(systemName: "pencil") }.buttonStyle(.borderless).help("Edit")
                 DeleteButton(title: "Delete this test case?") { store.deleteTestCase(testCase.id) }
             }
-            if !testCase.steps.isEmpty { detail("Steps", testCase.steps) }
+            if !testCase.risk.isEmpty { detail("Risk", testCase.risk) }
+            if !testCase.steps.isEmpty { detail(testCase.isRegression ? "Steps to reproduce" : "Steps", testCase.steps) }
             if !testCase.expected.isEmpty { detail("Expected result", testCase.expected) }
             Divider()
             HStack(spacing: 8) {

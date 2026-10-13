@@ -151,6 +151,35 @@ final class AICaseDrafterTests: XCTestCase {
         XCTAssertTrue(prompt.system.contains("JSON"))
     }
 
+    func testRegressionPromptSharesContextAndMarksCases() throws {
+        let pr = PullRequestDetail(repo: "me/a", number: 9, title: "Add login", body: "Adds OAuth", files: ["Sources/Login.swift"])
+        let prompt = DraftPrompt.makeRegression(ticketKey: "me/a#4", title: "Login", body: "Users need to sign in", pullRequests: [pr])
+        XCTAssertTrue(prompt.regression)
+        XCTAssertTrue(prompt.user.contains("Sources/Login.swift"))
+        XCTAssertTrue(prompt.system.contains("regression"))
+
+        let text = #"{"cases":[{"title":"Old login breaks","risk":"Shared session code changed","steps":["Open app","Sign in with email"],"expected":"Signed in"}]}"#
+        let parsed = try AICaseClient.parseCases(text, regression: prompt.regression)
+        XCTAssertEqual(parsed.count, 1)
+        XCTAssertTrue(parsed[0].isRegression)
+        XCTAssertEqual(parsed[0].risk, "Shared session code changed")
+        XCTAssertEqual(parsed[0].steps, "1. Open app\n2. Sign in with email")
+    }
+
+    func testPlainDraftsAreNotRegressions() throws {
+        let parsed = try AICaseClient.parseCases(cases)
+        XCTAssertFalse(parsed[0].isRegression)
+        XCTAssertEqual(parsed[0].risk, "")
+    }
+
+    func testTestCaseDecodesWithoutRegressionFields() throws {
+        let id = UUID(), ticket = UUID()
+        let json = #"{"id":"\#(id)","ticketID":"\#(ticket)","title":"T","steps":"s","expected":"e","createdAt":0}"#
+        let decoded = try JSONDecoder().decode(TestCase.self, from: Data(json.utf8))
+        XCTAssertFalse(decoded.isRegression)
+        XCTAssertEqual(decoded.risk, "")
+    }
+
     func testPromptWithoutPullRequestsSaysSo() {
         let prompt = DraftPrompt.make(ticketKey: "me/a#4", title: "Login", body: "", pullRequests: [])
         XCTAssertTrue(prompt.user.contains("No linked pull request"))

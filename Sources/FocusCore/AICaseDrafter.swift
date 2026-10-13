@@ -34,11 +34,15 @@ public struct DraftCase: Identifiable, Equatable, Sendable {
     public var title: String
     public var steps: String
     public var expected: String
+    public var risk: String
+    public var isRegression: Bool
 
-    public init(title: String, steps: String = "", expected: String = "") {
+    public init(title: String, steps: String = "", expected: String = "", risk: String = "", isRegression: Bool = false) {
         self.title = title
         self.steps = steps
         self.expected = expected
+        self.risk = risk
+        self.isRegression = isRegression
     }
 }
 
@@ -77,6 +81,8 @@ public enum AIError: LocalizedError, Equatable {
 public struct DraftPrompt: Equatable, Sendable {
     public var system: String
     public var user: String
+    /// Marks the parsed cases as regression cases.
+    public var regression: Bool
 
     static let maxTicketBody = 4000
     static let maxPRBody = 3000
@@ -84,9 +90,10 @@ public struct DraftPrompt: Equatable, Sendable {
     static let maxPatchPerFile = 4000
     static let maxPatchTotal = 24000
 
-    public init(system: String, user: String) {
+    public init(system: String, user: String, regression: Bool = false) {
         self.system = system
         self.user = user
+        self.regression = regression
     }
 
     public static func make(ticketKey: String, title: String, body: String, pullRequests: [PullRequestDetail]) -> DraftPrompt {
@@ -96,9 +103,32 @@ public struct DraftPrompt: Equatable, Sendable {
         Reply with JSON only, in this shape: {"cases":[{"title":"...","steps":["..."],"expected":"..."}]}. \
         Write 3 to 10 cases. Do not invent features that are not described.
         """
-        if pullRequests.contains(where: { $0.patches.contains { !($0.patch ?? "").isEmpty } }) {
+        if hasCode(pullRequests) {
             system += " Use the code changes to make steps and expected results specific, and do not invent behavior that is not visible in them."
         }
+        return DraftPrompt(system: system, user: context(ticketKey: ticketKey, title: title, body: body, pullRequests: pullRequests))
+    }
+
+    /// Asks for existing behavior the change could break, each with steps to reproduce the breakage.
+    public static func makeRegression(ticketKey: String, title: String, body: String, pullRequests: [PullRequestDetail]) -> DraftPrompt {
+        var system = """
+        You are a QA engineer doing regression analysis. From the ticket and pull request details, identify existing behavior \
+        that this change could break: neighbouring features, shared code paths, changed defaults, data, permissions and integrations. \
+        Do not test the new behavior itself. For each potential regression write a test case. \
+        Reply with JSON only, in this shape: {"cases":[{"title":"the regression that could happen","risk":"why this change could cause it","steps":["steps to reproduce it"],"expected":"correct behavior that must still hold"}]}. \
+        Write 3 to 8 cases, most likely first. Make steps concrete. Do not invent features that are not described.
+        """
+        if hasCode(pullRequests) {
+            system += " Name the changed files or functions in each risk, and do not invent behavior that is not visible in the code changes."
+        }
+        return DraftPrompt(system: system, user: context(ticketKey: ticketKey, title: title, body: body, pullRequests: pullRequests), regression: true)
+    }
+
+    private static func hasCode(_ pullRequests: [PullRequestDetail]) -> Bool {
+        pullRequests.contains(where: { $0.patches.contains { !($0.patch ?? "").isEmpty } })
+    }
+
+    private static func context(ticketKey: String, title: String, body: String, pullRequests: [PullRequestDetail]) -> String {
         var user = "Ticket \(ticketKey): \(title)\n\n\(clip(body, maxTicketBody))\n"
         if pullRequests.isEmpty {
             user += "\nNo linked pull request.\n"
@@ -113,7 +143,7 @@ public struct DraftPrompt: Equatable, Sendable {
             }
             user += codeSection(pr.patches, budget: &codeBudget)
         }
-        return DraftPrompt(system: system, user: user)
+        return user
     }
 
     /// Patch text shared across all pull requests by one budget; lockfiles, generated files and images are left out.
@@ -177,7 +207,7 @@ public struct AICaseClient: Sendable {
         default: throw AIError.http(response.statusCode, provider)
         }
         guard let text = replyText(data) else { throw AIError.unreadableReply }
-        let cases = try Self.parseCases(text)
+        let cases = try Self.parseCases(text, regression: prompt.regression)
         guard !cases.isEmpty else { throw AIError.noCases }
         return cases
     }
@@ -253,7 +283,7 @@ public struct AICaseClient: Sendable {
     }
 
     /// Accepts `{"cases":[…]}` or a bare array, inside optional prose or code fences.
-    static func parseCases(_ text: String) throws -> [DraftCase] {
+    static func parseCases(_ text: String, regression: Bool = false) throws -> [DraftCase] {
         guard let json = jsonSlice(of: text), let data = json.data(using: .utf8),
               let value = try? JSONSerialization.jsonObject(with: data) else { throw AIError.unreadableReply }
         let items: [[String: Any]]
@@ -267,7 +297,10 @@ public struct AICaseClient: Sendable {
         return items.compactMap { item in
             let title = (item["title"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             guard !title.isEmpty else { return nil }
-            return DraftCase(title: title, steps: stepsText(item["steps"]), expected: (item["expected"] as? String) ?? "")
+            return DraftCase(
+                title: title, steps: stepsText(item["steps"]), expected: (item["expected"] as? String) ?? "",
+                risk: regression ? ((item["risk"] as? String) ?? "") : "", isRegression: regression
+            )
         }
     }
 

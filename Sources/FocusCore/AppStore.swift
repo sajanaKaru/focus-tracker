@@ -1088,7 +1088,7 @@ public final class AppStore {
     }
 
     /// Ranked suggestions for `day`; tickets from the most recent earlier non-empty plan that are still open rank as carried over.
-    /// A day off lists only the tickets already planned on it.
+    /// While a sprint is current, only its tickets are suggested. A day off lists only the tickets already planned on it.
     public func planCandidates(for day: Date, calendar: Calendar = .current) -> [PlanCandidate] {
         let start = calendar.startOfDay(for: day)
         let earlier = dayPlans
@@ -1100,13 +1100,18 @@ public final class AppStore {
             .mapValues { Int(($0.reduce(0) { $0 + $1.duration(at: now) } / 60).rounded()) }
         // A future day is ranked as of its own start so "due now" means due by then.
         let ranked = DayPlanner.rank(
-            tickets: workspaceTickets, carriedOver: carried, now: max(now, start), settings: planSettings, calendar: calendar,
+            tickets: sprintScoped(workspaceTickets), carriedOver: carried, now: max(now, start), settings: planSettings, calendar: calendar,
             trackedMinutes: tracked, plannedAheadMinutes: plannedAheadMinutes(before: start, tracked: tracked, calendar: calendar)
         )
         let planned = Set(plan(for: day, calendar: calendar)?.ticketIDs ?? [])
         guard planSettings.isWorkingDay(day, calendar: calendar) else { return ranked.filter { planned.contains($0.id) } }
         // Tickets the earlier planned days are expected to finish drop out, unless already planned on this day.
         return ranked.filter { $0.plannedAheadMinutes == 0 || $0.estimateMinutes > 0 || planned.contains($0.id) }
+    }
+
+    private func sprintScoped(_ tickets: [Ticket]) -> [Ticket] {
+        guard hasCurrentSprint else { return tickets }
+        return tickets.filter { $0.sprints.contains { $0.isCurrent(at: now) } }
     }
 
     /// Work that planned working days from today up to `start` are expected to use of each ticket.

@@ -2,13 +2,14 @@ import FocusCore
 import SwiftUI
 
 enum TicketPageTab: String, CaseIterable, Identifiable {
-    case tests, plans, notes
+    case tests, regression, plans, notes
 
     var id: String { rawValue }
 
     var title: String {
         switch self {
         case .tests: "Test cases"
+        case .regression: "Regression"
         case .plans: "Plans"
         case .notes: "Notes"
         }
@@ -17,6 +18,7 @@ enum TicketPageTab: String, CaseIterable, Identifiable {
     var symbol: String {
         switch self {
         case .tests: "checklist"
+        case .regression: "arrow.triangle.2.circlepath"
         case .plans: "list.bullet.clipboard"
         case .notes: "note.text"
         }
@@ -25,13 +27,14 @@ enum TicketPageTab: String, CaseIterable, Identifiable {
     var key: KeyEquivalent {
         switch self {
         case .tests: "1"
-        case .plans: "2"
-        case .notes: "3"
+        case .regression: "2"
+        case .plans: "3"
+        case .notes: "4"
         }
     }
 }
 
-/// Full-page ticket view with three areas: test cases, plans and notes.
+/// Full-page ticket view with four areas: test cases, regression, plans and notes.
 struct TicketPage: View {
     @Environment(AppStore.self) private var store
     @AppStorage("ticketPageTab") private var tabRaw = TicketPageTab.tests.rawValue
@@ -57,6 +60,7 @@ struct TicketPage: View {
                     Group {
                         switch tab {
                         case .tests: TicketTestCasesTab(ticket: ticket)
+                        case .regression: TicketTestCasesTab(ticket: ticket, regression: true)
                         case .plans: TicketPlansTab(ticket: ticket)
                         case .notes: TicketNotesTab(ticket: ticket)
                         }
@@ -82,7 +86,8 @@ struct TicketPage: View {
 
     private func count(_ tab: TicketPageTab) -> Int {
         switch tab {
-        case .tests: store.testCases(for: ticketID).count
+        case .tests: store.testCases(for: ticketID).filter { !$0.isRegression }.count
+        case .regression: store.testCases(for: ticketID).filter(\.isRegression).count
         case .plans: store.planComments(for: ticketID).count
         case .notes: store.notes.filter { $0.ticketID == ticketID }.count
         }

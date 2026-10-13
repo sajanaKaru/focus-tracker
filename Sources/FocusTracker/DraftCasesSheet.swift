@@ -6,7 +6,7 @@ struct DraftCasesSheet: View {
     @Environment(\.dismiss) private var dismiss
     @AppStorage(PrefKey.aiIncludeCode) private var includeCode = false
     let ticket: Ticket
-
+    var regression = false
     private enum Phase { case loadingPRs, choosing, generating, review }
 
     @State private var phase = Phase.loadingPRs
@@ -18,7 +18,7 @@ struct DraftCasesSheet: View {
     @State private var generation: Task<Void, Never>?
 
     var body: some View {
-        SheetScaffold(title: "Draft test cases", subtitle: ticket.displayKey + " · " + ticket.title, width: 720, height: 600) {
+        SheetScaffold(title: regression ? "Find regressions" : "Draft test cases", subtitle: ticket.displayKey + " · " + ticket.title, width: 720, height: 600) {
             Form {
                 switch phase {
                 case .loadingPRs:
@@ -68,6 +68,7 @@ struct DraftCasesSheet: View {
             )) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(draft.title).fontWeight(.medium)
+                    if !draft.risk.isEmpty { Text("Risk: \(draft.risk)").font(.caption).foregroundStyle(Theme.warning) }
                     if !draft.steps.isEmpty { Text(draft.steps).font(.caption).foregroundStyle(.secondary) }
                     if !draft.expected.isEmpty { Text("Expected: \(draft.expected)").font(.caption).foregroundStyle(.secondary) }
                 }
@@ -108,7 +109,7 @@ struct DraftCasesSheet: View {
         error = nil
         phase = .generating
         do {
-            drafts = try await store.draftTestCases(ticketID: ticket.id, pullRequests: linked.filter { chosenPRs.contains($0.id) })
+            drafts = try await store.draftTestCases(ticketID: ticket.id, pullRequests: linked.filter { chosenPRs.contains($0.id) }, regression: regression)
             kept = Set(drafts.map(\.id))
             phase = .review
         } catch {

@@ -45,14 +45,38 @@ public struct TestCase: Identifiable, Codable, Hashable, Sendable {
     public var steps: String
     public var expected: String
     public var createdAt: Date
+    /// For regression cases: what existing behavior could break and why.
+    public var risk: String
+    public var isRegression: Bool
 
-    public init(id: UUID = UUID(), ticketID: UUID, title: String, steps: String = "", expected: String = "", createdAt: Date = Date()) {
+    public init(
+        id: UUID = UUID(), ticketID: UUID, title: String, steps: String = "", expected: String = "", createdAt: Date = Date(),
+        risk: String = "", isRegression: Bool = false
+    ) {
         self.id = id
         self.ticketID = ticketID
         self.title = title
         self.steps = steps
         self.expected = expected
         self.createdAt = createdAt
+        self.risk = risk
+        self.isRegression = isRegression
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, ticketID, title, steps, expected, createdAt, risk, isRegression
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(UUID.self, forKey: .id)
+        ticketID = try c.decode(UUID.self, forKey: .ticketID)
+        title = try c.decode(String.self, forKey: .title)
+        steps = try c.decode(String.self, forKey: .steps)
+        expected = try c.decode(String.self, forKey: .expected)
+        createdAt = try c.decode(Date.self, forKey: .createdAt)
+        risk = try c.decodeIfPresent(String.self, forKey: .risk) ?? ""
+        isRegression = try c.decodeIfPresent(Bool.self, forKey: .isRegression) ?? false
     }
 }
 

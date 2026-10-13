@@ -58,16 +58,23 @@ struct TestCaseSheet: View {
     @Environment(\.dismiss) private var dismiss
     let ticketID: UUID
     let existing: TestCase?
+    var startsAsRegression = false
     @State private var title = ""
     @State private var steps = ""
     @State private var expected = ""
+    @State private var risk = ""
+    @State private var isRegression = false
 
     var body: some View {
         SheetScaffold(title: existing == nil ? "New test case" : "Edit test case", width: 600) {
             Form {
                 TextField("Title", text: $title, prompt: Text("e.g. User can sign in"))
+                Toggle("Regression case", isOn: $isRegression)
+                if isRegression {
+                    TextField("Risk", text: $risk, prompt: Text("What existing behavior could break, and why"))
+                }
                 VStack(alignment: .leading) {
-                    Text("Steps").font(.caption).foregroundStyle(.secondary)
+                    Text(isRegression ? "Steps to reproduce" : "Steps").font(.caption).foregroundStyle(.secondary)
                     TextEditor(text: $steps).frame(height: 140)
                 }
                 TextField("Expected result", text: $expected)
@@ -82,18 +89,20 @@ struct TestCaseSheet: View {
                 .disabled(title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
         }
         .onAppear {
-            guard let existing else { return }
+            guard let existing else { isRegression = startsAsRegression; return }
             title = existing.title
             steps = existing.steps
             expected = existing.expected
+            risk = existing.risk
+            isRegression = existing.isRegression
         }
     }
 
     private func save() {
         if let existing {
-            store.updateTestCase(existing.id, title: title, steps: steps, expected: expected)
+            store.updateTestCase(existing.id, title: title, steps: steps, expected: expected, risk: isRegression ? risk : "", isRegression: isRegression)
         } else {
-            store.addTestCase(ticketID: ticketID, title: title, steps: steps, expected: expected)
+            store.addTestCase(ticketID: ticketID, title: title, steps: steps, expected: expected, risk: isRegression ? risk : "", isRegression: isRegression)
         }
         dismiss()
     }

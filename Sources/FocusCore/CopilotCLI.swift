@@ -129,7 +129,7 @@ public struct CopilotACPClient: Sendable {
             _ = try await conversation.request("session/prompt", ["sessionId": session.id, "prompt": [["type": "text", "text": message]]])
             return conversation.text
         }
-        let cases = try AICaseClient.parseCases(text)
+        let cases = try AICaseClient.parseCases(text, regression: prompt.regression)
         guard !cases.isEmpty else { throw AIError.noCases }
         return cases
     }
