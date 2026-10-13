@@ -14,16 +14,18 @@ extension GitHubClient {
         return sha
     }
 
-    /// File paths at a commit, as one listing. GitHub may truncate very large trees.
-    func fetchTreePaths(repo: String, sha: String) async throws -> [String] {
+    /// Files at a commit with their sizes, as one listing. GitHub may truncate very large trees.
+    func fetchTreeFiles(repo: String, sha: String) async throws -> [RepoFile] {
         struct Payload: Decodable {
-            struct Entry: Decodable { let path: String; let type: String }
+            struct Entry: Decodable { let path: String; let type: String; let size: Int? }
             let tree: [Entry]
         }
         let (owner, name) = try Self.ownerAndName(repo)
         guard Self.isCommitSHA(sha) else { throw GitHubError.invalidResponse }
         let (data, _) = try await get(try Self.url("/repos/\(owner)/\(name)/git/trees/\(sha)?recursive=1"))
-        return try JSONDecoder().decode(Payload.self, from: data).tree.filter { $0.type == "blob" }.map(\.path)
+        return try JSONDecoder().decode(Payload.self, from: data).tree
+            .filter { $0.type == "blob" }
+            .map { RepoFile(path: $0.path, size: $0.size ?? 0) }
     }
 
     /// A file's text at a commit, cut to `maxChars`; nil for binary content.
@@ -61,26 +63,54 @@ extension GitHubClient {
     }
 }
 
-/// Builds the "scan the GitHub repository" prompts: the AI picks related files from the file list, then their text is added to the final prompt.
+struct RepoFile: Equatable, Sendable {
+    let path: String
+    let size: Int
+}
+
+/// Builds the repository-scan prompts: the AI picks related files from the file list, then their text is added to the final prompt.
 public enum RepoScan {
     static let maxPaths = 2500
+    static let maxListChars = 40000
+    static let maxFileBytes = 200_000
     static let maxFiles = 8
     static let maxFileChars = 6000
     static let maxTotalChars = 30000
 
-    /// Source-like paths only: no lockfiles, generated files, build folders or secrets.
-    static func candidatePaths(_ all: [String]) -> [String] {
-        Array(all.filter { !DraftPrompt.isNoise($0) && !RepoReadPolicy.isSensitive(path: $0) }.sorted().prefix(maxPaths))
+    /// Readable source files, those nearest the changed files first, within the list limits. No lockfiles, generated files, big files or secrets.
+    static func candidatePaths(_ files: [RepoFile], near changed: [String]) -> [String] {
+        func directories(_ path: String) -> [String] {
+            let parts = path.split(separator: "/").dropLast().map(String.init)
+            return parts.indices.map { parts[...$0].joined(separator: "/") }
+        }
+        let changedDirs = Set(changed.flatMap(directories))
+        // Depth of the deepest directory this file shares with a changed file.
+        func closeness(_ path: String) -> Int {
+            directories(path).lastIndex { changedDirs.contains($0) }.map { $0 + 1 } ?? 0
+        }
+        let ranked = files
+            .filter { $0.size <= maxFileBytes && !DraftPrompt.isNoise($0.path) && !SensitivePaths.matches($0.path) }
+            .map { (path: $0.path, score: closeness($0.path)) }
+            .sorted { $0.score != $1.score ? $0.score > $1.score : $0.path < $1.path }
+        var result: [String] = []
+        var chars = 0
+        for item in ranked {
+            guard result.count < maxPaths, chars + item.path.count + 1 <= maxListChars else { break }
+            result.append(item.path)
+            chars += item.path.count + 1
+        }
+        return result
     }
 
-    static func selectionPrompt(from base: DraftPrompt, paths: [String]) -> DraftPrompt {
+    static func selectionPrompt(from base: DraftPrompt, repo: String, number: Int, paths: [String]) -> DraftPrompt {
         let system = """
         You are a QA engineer preparing a test analysis. From the ticket, the pull request and the repository's file list, \
         choose up to \(maxFiles) files you need to read to understand what the change touches or could affect: callers, shared helpers, \
         related features and existing tests. Pick only paths from the list. \
         Reply with JSON only, in this shape: {"files":["path/one","path/two"]}.
         """
-        return DraftPrompt(system: system, user: base.user + "\nRepository files:\n" + paths.joined(separator: "\n") + "\n")
+        let list = "\nFiles in \(repo) at the latest commit of pull request #\(number), those nearest the change first:\n"
+        return DraftPrompt(system: system, user: base.user + list + paths.joined(separator: "\n") + "\n")
     }
 
     /// Paths from the reply that exist in `allowed`, without duplicates, at most `maxFiles`.

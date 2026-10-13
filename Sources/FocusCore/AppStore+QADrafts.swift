@@ -21,32 +21,14 @@ extension AppStore {
     /// Copilot has no key to check; a missing or signed-out CLI is reported when drafting.
     public var hasAIKey: Bool { !aiProvider.usesAPIKey || aiKey(for: aiProvider) != nil }
 
-    /// Whether drafting sends the linked pull requests' code changes to the provider. Off by default.
-    public var aiIncludeCode: Bool { defaults.bool(forKey: PrefKey.aiIncludeCode) }
-
-    public func setAIIncludeCode(_ include: Bool) {
-        defaults.set(include, forKey: PrefKey.aiIncludeCode)
+    /// How much code drafting may send to the provider. Defaults to off; an older "send PR code changes" setting counts as `.diffs`.
+    public var aiCodeAccess: CodeAccess {
+        if let saved = defaults.string(forKey: PrefKey.aiCodeAccess).flatMap(CodeAccess.init(rawValue:)) { return saved }
+        return defaults.bool(forKey: PrefKey.aiIncludeCode) ? .diffs : .off
     }
 
-    /// Whether drafting also reads related files from the pull request's repository on GitHub. Off by default.
-    public var aiScanGitHub: Bool { defaults.bool(forKey: PrefKey.aiScanGitHub) }
-
-    public func setAIScanGitHub(_ enabled: Bool) {
-        defaults.set(enabled, forKey: PrefKey.aiScanGitHub)
-    }
-
-    /// Whether Copilot may read a local checkout of the repository while drafting. Off by default; Copilot only.
-    public var aiRepoAccess: Bool { defaults.bool(forKey: PrefKey.aiRepoAccess) }
-
-    public func setAIRepoAccess(_ enabled: Bool) {
-        defaults.set(enabled, forKey: PrefKey.aiRepoAccess)
-    }
-
-    /// Folder that holds the local checkouts, e.g. `~/Developer`.
-    public var aiReposFolder: String { defaults.string(forKey: PrefKey.aiReposFolder) ?? "" }
-
-    public func setAIReposFolder(_ folder: String) {
-        defaults.set(folder.trimmingCharacters(in: .whitespacesAndNewlines), forKey: PrefKey.aiReposFolder)
+    public func setAICodeAccess(_ access: CodeAccess) {
+        defaults.set(access.rawValue, forKey: PrefKey.aiCodeAccess)
     }
 
     private func aiKey(for provider: AIProvider) -> String? {
@@ -67,6 +49,8 @@ extension AppStore {
         let key = aiKey(for: provider)
         if provider.usesAPIKey, key == nil { throw AIError.missingKey(provider) }
         guard let ticket = ticket(ticketID) else { return [] }
+        let access = aiCodeAccess
+        draftNote = nil
 
         var details: [PullRequestDetail] = []
         var github: GitHubClient?
@@ -76,7 +60,7 @@ extension AppStore {
             github = client
             for pr in pullRequests {
                 var detail = try await client.fetchPullRequestDetail(repo: pr.repo, number: pr.number)
-                if aiIncludeCode {
+                if access.sendsDiffs {
                     // Without patches the draft still works from titles and file names.
                     detail.patches = (try? await client.fetchPullRequestPatches(repo: pr.repo, number: pr.number)) ?? []
                     try Task.checkCancellation()
@@ -87,40 +71,58 @@ extension AppStore {
         let make = regression ? DraftPrompt.makeRegression : DraftPrompt.make
         var prompt = make(ticket.displayKey, ticket.title, ticket.body, details)
 
-        var repository: URL?
-        if provider == .copilot, aiRepoAccess, let repo = pullRequests.first?.repo ?? ticket.github?.repo {
-            repository = RepoLocator.find(repo: repo, in: aiReposFolder)
-            if repository == nil, !aiScanGitHub {
-                notice = "No local checkout of \(repo) found in the repositories folder, so Copilot drafted without reading the code."
+        if access.readsRepository {
+            if let github, !details.isEmpty {
+                let scan = try await scanRepositories(details: details, ticket: ticket, github: github, provider: provider, key: key)
+                prompt.user += scan.section
+                draftNote = scan.summary
+            } else {
+                draftNote = "No linked pull request, so no repository files were read."
             }
         }
-        if repository == nil, aiScanGitHub, let github, !details.isEmpty {
-            prompt.user += try await scanRepositories(details: details, github: github, base: prompt, provider: provider, key: key)
-        }
 
-        let text = try await complete(prompt, provider: provider, key: key, repository: repository)
+        let text = try await complete(prompt, provider: provider, key: key)
         let cases = try AICaseClient.parseCases(text, regression: prompt.regression)
         guard !cases.isEmpty else { throw AIError.noCases }
         return cases
     }
 
-    private func complete(_ prompt: DraftPrompt, provider: AIProvider, key: String?, repository: URL? = nil) async throws -> String {
+    private func complete(_ prompt: DraftPrompt, provider: AIProvider, key: String?) async throws -> String {
         if provider == .copilot {
-            return try await copilotClient().complete(prompt, model: aiModel(for: provider), repository: repository)
+            return try await copilotClient().complete(prompt, model: aiModel(for: provider))
         }
         return try await AICaseClient(provider: provider, model: aiModel(for: provider), apiKey: key ?? "", transport: transport).complete(prompt)
     }
 
+    private struct RepoScanResult {
+        var section = ""
+        var files: [String] = []
+        var problems: [String] = []
+
+        var summary: String {
+            var parts = [files.isEmpty ? "The AI picked no related files to read." : "Read \(files.count) related file\(files.count == 1 ? "" : "s") from GitHub: \(files.joined(separator: ", "))."]
+            parts += problems
+            return parts.joined(separator: " ")
+        }
+    }
+
     /// Reads related files from GitHub at each pull request's latest commit: the AI picks them from the file list, then their text is returned for the prompt.
-    private func scanRepositories(details: [PullRequestDetail], github: GitHubClient, base: DraftPrompt, provider: AIProvider, key: String?) async throws -> String {
-        var out = ""
+    private func scanRepositories(details: [PullRequestDetail], ticket: Ticket, github: GitHubClient, provider: AIProvider, key: String?) async throws -> RepoScanResult {
+        var result = RepoScanResult()
         var budget = RepoScan.maxTotalChars
         for pr in details.prefix(3) where budget > 0 {
             do {
+                // Only this pull request's context, so several pull requests don't repeat each other's text.
+                let base = DraftPrompt.make(ticketKey: ticket.displayKey, title: ticket.title, body: ticket.body, pullRequests: [pr])
                 let sha = try await github.fetchPullRequestHead(repo: pr.repo, number: pr.number)
-                let paths = RepoScan.candidatePaths(try await github.fetchTreePaths(repo: pr.repo, sha: sha))
-                guard !paths.isEmpty else { continue }
-                let reply = try await complete(RepoScan.selectionPrompt(from: base, paths: paths), provider: provider, key: key)
+                let changed = pr.files + pr.patches.map(\.path)
+                let paths = RepoScan.candidatePaths(try await github.fetchTreeFiles(repo: pr.repo, sha: sha), near: changed)
+                guard !paths.isEmpty else {
+                    result.problems.append("No readable files found in \(pr.repo).")
+                    continue
+                }
+                let selection = RepoScan.selectionPrompt(from: base, repo: pr.repo, number: pr.number, paths: paths)
+                let reply = try await complete(selection, provider: provider, key: key)
                 var files: [(path: String, text: String)] = []
                 for path in RepoScan.parseSelection(reply, allowed: Set(paths)) where budget > 0 {
                     try Task.checkCancellation()
@@ -128,14 +130,15 @@ extension AppStore {
                     budget -= text.count
                     files.append((path, text))
                 }
-                out += RepoScan.section(repo: pr.repo, files: files)
+                result.section += RepoScan.section(repo: pr.repo, files: files)
+                result.files += files.map { "\(pr.repo)/\($0.path)" }
             } catch is CancellationError {
                 throw CancellationError()
             } catch {
-                notice = "Couldn't scan \(pr.repo) on GitHub (\(error.localizedDescription)); drafted without it."
+                result.problems.append("Couldn't scan \(pr.repo) on GitHub (\(error.localizedDescription)).")
             }
         }
-        return out
+        return result
     }
 
     /// Models enabled for the signed-in Copilot account.

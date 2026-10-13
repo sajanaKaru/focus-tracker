@@ -18,9 +18,7 @@ public enum PrefKey {
     public static let aiProvider = "aiProvider"
     public static let aiModelPrefix = "aiModel."
     public static let aiIncludeCode = "aiIncludeCode"
-    public static let aiRepoAccess = "aiRepoAccess"
-    public static let aiScanGitHub = "aiScanGitHub"
-    public static let aiReposFolder = "aiReposFolder"
+    public static let aiCodeAccess = "aiCodeAccess"
     public static let copilotPath = "copilotPath"
 }
 
@@ -82,6 +80,8 @@ public final class AppStore {
     public private(set) var now = Date()
     public private(set) var syncState: SyncState = .idle
     public var notice: String?
+    /// What the last draft read from the repository, shown in the draft sheet.
+    public internal(set) var draftNote: String?
 
     public internal(set) var backupVersions: [BackupVersion] = []
 
