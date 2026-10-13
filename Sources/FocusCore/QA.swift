@@ -189,6 +189,28 @@ public struct QAMilestonePlan: Identifiable, Codable, Hashable, Sendable {
     }
 }
 
+/// A milestone plan's tickets (verified ones included) with the numbers shown on its card.
+public struct QAMilestoneProgress: Equatable, Sendable {
+    public var plan: QAMilestonePlan
+    public var tickets: [QAPlanCandidate]
+
+    public var total: Int { tickets.count }
+    public var verified: Int { count(.verified) }
+    public var fraction: Double { total == 0 ? 0 : Double(verified) / Double(total) }
+    public var remainingMinutes: Int { tickets.filter { $0.state != .verified }.reduce(0) { $0 + $1.estimateMinutes } }
+
+    public func count(_ state: QAState) -> Int { tickets.filter { $0.state == state }.count }
+
+    public func daysRemaining(at now: Date, calendar: Calendar = .current) -> Int? {
+        guard let target = plan.targetDate else { return nil }
+        return calendar.dateComponents([.day], from: calendar.startOfDay(for: now), to: calendar.startOfDay(for: target)).day
+    }
+
+    public func isOverdue(at now: Date, calendar: Calendar = .current) -> Bool {
+        (daysRemaining(at: now, calendar: calendar) ?? 0) < 0 && verified < total
+    }
+}
+
 public enum QAState: Equatable, Sendable {
     case noCases, ready, testing, failed, verified
 }

@@ -41,6 +41,18 @@ extension AppStore {
         updateQAMilestonePlan(planID) { $0.archived = true }
     }
 
+    public func qaMilestoneProgress(for plan: QAMilestonePlan) -> QAMilestoneProgress {
+        let excluded = Set(plan.excludedTicketIDs)
+        let tickets = qaCandidates(includeVerified: true)
+            .filter { $0.ticket.milestone?.title == plan.milestone && !excluded.contains($0.id) }
+        return QAMilestoneProgress(plan: plan, tickets: tickets)
+    }
+
+    /// Tickets QA removed from the plan, so they can be restored; ids that no longer exist are skipped.
+    public func qaExcludedTickets(for plan: QAMilestonePlan) -> [Ticket] {
+        plan.excludedTicketIDs.compactMap { ticket($0) }
+    }
+
     private func updateQAMilestonePlan(_ id: UUID, _ change: (inout QAMilestonePlan) -> Void) {
         guard let index = qaMilestonePlans.firstIndex(where: { $0.id == id }) else { return }
         change(&qaMilestonePlans[index])
