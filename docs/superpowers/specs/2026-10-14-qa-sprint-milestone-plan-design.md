@@ -39,7 +39,7 @@ Nothing else is stored. A plan's tickets, progress and estimate are derived.
 ## Derivation (`AppStore+QAMilestonePlan.swift`)
 
 - **Plan tickets:** `qaPlanCandidates()` filtered to `ticket.milestone?.title == plan.milestone` and not in `excludedTicketIDs`.
-- **Progress:** verified count over total count, using `QAState`; per-state counts (failed, testing, ready, verified). A verified ticket stays in the plan so progress can reach 100%. Because `qaPlanCandidates()` omits verified tickets, the milestone derivation builds its list from the same queues with verified included, and ticks on verified tickets are not offered.
+- **Progress:** verified count over total count, using `QAState`; per-state counts (failed, testing, ready, verified). A verified ticket stays in the plan so progress can reach 100%. Because `qaPlanCandidates()` omits verified tickets, the milestone derivation builds its list from the same queues with verified included, and ticks on verified tickets are not offered. Progress counts tickets currently in QA stages; a ticket deployed to Live leaves the plan, so the total shrinks as tickets ship (known limitation).
 - **Estimate:** sum of `QAPlanner.estimate` over unverified plan tickets.
 - **Sprint of a ticket:** among `ticket.sprints`, the one with the latest `end`; nil when the ticket has none.
 - **Sprint groups:** candidates grouped by sprint value, ordered by sprint `end` ascending (oldest first); the no-sprint group is last. A group is "ended" when its `end` is before `now`. Each group carries ticket count and estimate.

@@ -10,8 +10,12 @@ struct QATestPlanCard: View {
 
     @Binding var selectedTicketID: UUID?
     @State private var tab: Tab = .today
+    @State private var calendarBusy: [DateInterval] = []
+    @State private var calendarNote: String?
+    @Environment(AppStore.self) private var store
 
     var body: some View {
+        let candidates = store.qaPlanCandidates()
         VStack(alignment: .leading, spacing: 10) {
             HStack {
                 SectionTitle(title: "Test plan")
@@ -24,18 +28,30 @@ struct QATestPlanCard: View {
                 .frame(width: 200)
             }
             switch tab {
-            case .today: QATodayPlanTab(selectedTicketID: $selectedTicketID)
+            case .today: QATodayPlanTab(selectedTicketID: $selectedTicketID, calendarBusy: calendarBusy, calendarNote: calendarNote)
             case .milestones: QAMilestonePlansView(selectedTicketID: $selectedTicketID)
             }
         }
+        .task(id: "\(candidates.isEmpty)|\(Calendar.current.startOfDay(for: store.now))") { await loadCalendarAndPlan(day: store.now) }
+    }
+
+    private func loadCalendarAndPlan(day: Date) async {
+        do {
+            calendarBusy = try await CalendarService().busyIntervals(on: day)
+            calendarNote = nil
+        } catch {
+            calendarBusy = []
+            calendarNote = "Calendar unavailable, so meetings are not subtracted. \(error.localizedDescription)"
+        }
+        store.ensureQAPlan(for: day, calendarBusy: calendarBusy)
     }
 }
 
 struct QATodayPlanTab: View {
     @Environment(AppStore.self) private var store
     @Binding var selectedTicketID: UUID?
-    @State private var calendarBusy: [DateInterval] = []
-    @State private var calendarNote: String?
+    let calendarBusy: [DateInterval]
+    let calendarNote: String?
 
     // Declared so the tab re-renders when a plan setting changes in Settings.
     @AppStorage(PrefKey.workingMinutes) private var workingMinutes = 480
@@ -105,7 +121,6 @@ struct QATodayPlanTab: View {
                 }
             }
         }
-        .task(id: "\(candidates.isEmpty)|\(Calendar.current.startOfDay(for: day))") { await loadCalendarAndPlan(day: day) }
     }
 
     private func header(_ group: QASprintGroup, now: Date) -> some View {
@@ -122,16 +137,6 @@ struct QATodayPlanTab: View {
         }
     }
 
-    private func loadCalendarAndPlan(day: Date) async {
-        do {
-            calendarBusy = try await CalendarService().busyIntervals(on: day)
-            calendarNote = nil
-        } catch {
-            calendarBusy = []
-            calendarNote = "Calendar unavailable, so meetings are not subtracted. \(error.localizedDescription)"
-        }
-        store.ensureQAPlan(for: day, calendarBusy: calendarBusy)
-    }
 }
 
 /// One ticket in a QA plan. Verified tickets show a seal instead of the planned toggle; `onExclude` adds a remove button.

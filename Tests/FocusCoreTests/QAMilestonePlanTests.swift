@@ -147,6 +147,50 @@ final class QAMilestonePlanTests: XCTestCase {
         XCTAssertNil(progress(nil, [ready]).daysRemaining(at: now))
     }
 
+    func testTicketDeployedToLiveLeavesTheMilestonePlan() throws {
+        let (store, _) = QAPlanFixtures.makeStore()
+        let r1 = milestone("R1")
+        let verified = QAPlanFixtures.add(store, 1, milestone: r1)
+        QAPlanFixtures.verify(store, verified)
+        QAPlanFixtures.add(store, 2, milestone: r1)
+        store.addQAMilestonePlan(r1)
+        XCTAssertEqual(store.qaMilestoneProgress(for: store.qaMilestonePlans[0]).total, 2)
+
+        store.update(verified.id) { ticket in
+            guard let i = ticket.fields?.firstIndex(where: { $0.name == "Status" }) else { return }
+            ticket.fields?[i].value = "Deployed to Live"
+        }
+        XCTAssertEqual(store.ticket(verified.id)?.environment, .live)
+        let progress = store.qaMilestoneProgress(for: store.qaMilestonePlans[0])
+        XCTAssertEqual(progress.total, 1)
+        XCTAssertEqual(progress.verified, 0)
+    }
+
+    func testExcludingFromAMilestonePlanLeavesTodaysPlanAlone() {
+        let (store, _) = QAPlanFixtures.makeStore()
+        let r1 = milestone("R1")
+        let ticket = QAPlanFixtures.add(store, 1, milestone: r1)
+        let day = Date()
+        store.toggleQAPlanned(ticket.id, on: day)
+        store.addQAMilestonePlan(r1)
+
+        store.excludeFromQAMilestonePlan(store.qaMilestonePlans[0].id, ticketID: ticket.id)
+        XCTAssertEqual(store.qaMilestoneProgress(for: store.qaMilestonePlans[0]).total, 0)
+        XCTAssertEqual(store.qaPlan(for: day)?.ticketIDs, [ticket.id])
+    }
+
+    func testExcludedTicketThatNoLongerExistsIsIgnored() {
+        let (store, _) = QAPlanFixtures.makeStore()
+        let r1 = milestone("R1")
+        QAPlanFixtures.add(store, 1, milestone: r1)
+        store.addQAMilestonePlan(r1)
+        let planID = store.qaMilestonePlans[0].id
+
+        store.excludeFromQAMilestonePlan(planID, ticketID: UUID())
+        XCTAssertTrue(store.qaExcludedTickets(for: store.qaMilestonePlans[0]).isEmpty)
+        XCTAssertEqual(store.qaMilestoneProgress(for: store.qaMilestonePlans[0]).total, 1)
+    }
+
     func testPlanningAMilestoneTicketUpdatesTodaysPlan() {
         let (store, _) = QAPlanFixtures.makeStore()
         let ticket = QAPlanFixtures.add(store, 1, milestone: milestone("R1"))

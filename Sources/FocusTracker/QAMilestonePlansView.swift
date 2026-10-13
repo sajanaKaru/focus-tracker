@@ -69,7 +69,8 @@ private struct MilestonePlanCard: View {
                 DashboardBar(segments: [
                     .init(value: progress.verified, color: Theme.success),
                     .init(value: progress.count(.testing), color: Theme.info),
-                    .init(value: progress.count(.failed), color: Theme.danger)
+                    .init(value: progress.count(.failed), color: Theme.danger),
+                    .init(value: progress.count(.ready), color: Theme.warning.opacity(0.35))
                 ])
                 Text("\(progress.verified) of \(progress.total) verified · ~\(text(progress.remainingMinutes)) remaining")
                     .font(.callout.monospacedDigit())
