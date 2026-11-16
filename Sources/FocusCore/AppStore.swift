@@ -20,6 +20,7 @@ public enum PrefKey {
     public static let aiIncludeCode = "aiIncludeCode"
     public static let aiCodeAccess = "aiCodeAccess"
     public static let copilotPath = "copilotPath"
+    public static let summaryGroupingMode = "summaryGroupingMode"
 }
 
 public enum SyncState: Equatable, Sendable {
@@ -76,6 +77,16 @@ public final class AppStore {
     /// A UI preference (tabs, ordering, defaults), not an access control.
     public var role: UserRole = .dev {
         didSet { defaults.set(role.rawValue, forKey: PrefKey.role) }
+    }
+    @ObservationIgnored
+    public var summaryGroupingMode: SummaryGroupingMode {
+        get {
+            defaults.string(forKey: PrefKey.summaryGroupingMode)
+                .flatMap(SummaryGroupingMode.init(rawValue:)) ?? .byType
+        }
+        set {
+            defaults.set(newValue.rawValue, forKey: PrefKey.summaryGroupingMode)
+        }
     }
     /// Updated every second while a timer runs; views read it to stay live.
     public private(set) var now = Date()
@@ -360,9 +371,10 @@ public final class AppStore {
         }
     }
 
-    /// Worked tickets grouped by their GitHub project Status (else the app status), then activities grouped by kind.
-    public func daySummarySections(for day: Date, calendar: Calendar = .current) -> [SummarySection] {
+    /// Worked tickets grouped by mode (Type / Label or Status / Stage), then activities grouped by kind.
+    public func daySummarySections(for day: Date, calendar: Calendar = .current, mode: SummaryGroupingMode? = nil) -> [SummarySection] {
         let range = dayRange(for: day, calendar: calendar)
+        let effectiveMode = mode ?? summaryGroupingMode
         var sections: [SummarySection] = []
         func append(_ title: String, _ item: SummaryItem) {
             if let i = sections.firstIndex(where: { $0.title == title }) {
@@ -379,7 +391,7 @@ public final class AppStore {
                 .sorted { $0.createdAt < $1.createdAt }
                 .map(\.text)
             guard seconds >= 60 || !ticketNotes.isEmpty else { continue }
-            let category = ticket.field(named: "Status")?.value ?? ticket.status.title
+            let category = SummaryClassifier.category(for: ticket, mode: effectiveMode)
             append(category, SummaryItem(text: ticket.github?.url ?? ticket.title, isLink: ticket.github != nil, notes: ticketNotes))
         }
         for activity in workspaceActivities where activity.duration(in: range, at: now) >= 60 {
@@ -404,8 +416,8 @@ public final class AppStore {
     }
 
     /// Plain-text summary with "• " bullets under each category heading and clean indentation.
-    public func daySummaryText(for day: Date, calendar: Calendar = .current, includeDate: Bool = false, includeTomorrow: Bool = false) -> String {
-        let sections = daySummarySections(for: day, calendar: calendar)
+    public func daySummaryText(for day: Date, calendar: Calendar = .current, includeDate: Bool = false, includeTomorrow: Bool = false, mode: SummaryGroupingMode? = nil) -> String {
+        let sections = daySummarySections(for: day, calendar: calendar, mode: mode)
         let heading = includeDate ? dateHeading(day) + "\n=========================\n\n" : ""
         let body: String
         if sections.isEmpty {
@@ -442,14 +454,14 @@ public final class AppStore {
     }
 
     /// The same summary as HTML so pasting into Slack or Mail gives real bullet lists and links.
-    public func daySummaryHTML(for day: Date, calendar: Calendar = .current, includeDate: Bool = false, includeTomorrow: Bool = false) -> String {
+    public func daySummaryHTML(for day: Date, calendar: Calendar = .current, includeDate: Bool = false, includeTomorrow: Bool = false, mode: SummaryGroupingMode? = nil) -> String {
         func esc(_ s: String) -> String {
             s.replacingOccurrences(of: "&", with: "&amp;")
                 .replacingOccurrences(of: "<", with: "&lt;")
                 .replacingOccurrences(of: ">", with: "&gt;")
                 .replacingOccurrences(of: "\"", with: "&quot;")
         }
-        let sections = daySummarySections(for: day, calendar: calendar)
+        let sections = daySummarySections(for: day, calendar: calendar, mode: mode)
         let heading = includeDate ? "<p style=\"font-weight: bold; margin-bottom: 4px;\">\(esc(dateHeading(day)))</p><hr style=\"border: none; border-top: 1px solid #ccc; margin-bottom: 12px;\">" : ""
         func list(_ items: [SummaryItem]) -> String {
             "<ul style=\"margin-top: 4px; margin-bottom: 12px; padding-left: 20px;\">" + items.map { item -> String in
