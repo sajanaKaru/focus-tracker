@@ -6,26 +6,15 @@ struct TicketCommentsSection: View {
     @Environment(AppStore.self) private var store
     let ticket: Ticket
     var onPlan: () -> Void
+    @State private var isExpanded: Bool = true
 
     var body: some View {
         if ticket.github != nil {
             let comments = store.issueComments[ticket.id] ?? []
             let loading = store.commentsLoading.contains(ticket.id)
             let drafts = store.unpostedPlanComments(for: ticket.id)
-            CollapsibleSection(
-                title: "Comments", count: comments.isEmpty ? nil : comments.count,
-                defaultExpanded: !Collapse.commentsAreLong(comments.map(\.body))
-            ) {
-                if loading {
-                    ProgressView().controlSize(.mini)
-                } else {
-                    Button { Task { await store.loadComments(ticket.id, minimumInterval: 0) } } label: { Image(systemName: "arrow.clockwise") }
-                        .buttonStyle(.borderless)
-                        .help("Reload comments")
-                        .accessibilityLabel("Reload comments")
-                }
-            } content: { expanded in
-                if expanded {
+            Section {
+                DisclosureGroup(isExpanded: $isExpanded) {
                     if comments.isEmpty {
                         if loading {
                             ProgressView().controlSize(.small)
@@ -40,10 +29,24 @@ struct TicketCommentsSection: View {
                         Text("Showing earlier comments; refresh failed: \(error)").font(.caption).foregroundStyle(Theme.warning)
                     }
                     ForEach(comments) { CommentRow(comment: $0) }
-                }
-                if !drafts.isEmpty {
-                    Button(action: onPlan) {
-                        Label("\(drafts.count) plan draft\(drafts.count == 1 ? "" : "s") not posted yet", systemImage: "square.and.pencil")
+                    if !drafts.isEmpty {
+                        Button(action: onPlan) {
+                            Label("\(drafts.count) plan draft\(drafts.count == 1 ? "" : "s") not posted yet", systemImage: "square.and.pencil")
+                        }
+                    }
+                } label: {
+                    HStack(spacing: 6) {
+                        Text("Comments")
+                        if !comments.isEmpty { Text("\(comments.count)").foregroundStyle(.secondary) }
+                        Spacer()
+                        if loading {
+                            ProgressView().controlSize(.mini)
+                        } else {
+                            Button { Task { await store.loadComments(ticket.id, minimumInterval: 0) } } label: { Image(systemName: "arrow.clockwise") }
+                                .buttonStyle(.borderless)
+                                .help("Reload comments")
+                                .accessibilityLabel("Reload comments")
+                        }
                     }
                 }
             }

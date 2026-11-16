@@ -22,6 +22,8 @@ struct AddToTodayMenu: View {
         Menu {
             Button { sheet = .add(.call) } label: { Label("Call", systemImage: Activity.Kind.call.symbol) }
             Button { sheet = .add(.meeting) } label: { Label("Meeting", systemImage: Activity.Kind.meeting.symbol) }
+            Button { sheet = .add(.codeReview) } label: { Label("Code Review", systemImage: Activity.Kind.codeReview.symbol) }
+            Button { sheet = .add(.support) } label: { Label("Customer Support", systemImage: Activity.Kind.support.symbol) }
             Button { sheet = .add(.ticket) } label: { Label("Ticket time", systemImage: "ticket") }
             Button { sheet = .add(.other) } label: { Label("Other", systemImage: Activity.Kind.other.symbol) }
             Divider()
@@ -41,7 +43,7 @@ struct AddToTodayMenu: View {
 
 struct AddActivitySheet: View {
     enum Choice: String, CaseIterable, Identifiable {
-        case call, meeting, ticket, other
+        case call, meeting, codeReview, support, ticket, other
 
         var id: String { rawValue }
 
@@ -49,6 +51,8 @@ struct AddActivitySheet: View {
             switch self {
             case .call: "Call"
             case .meeting: "Meeting"
+            case .codeReview: "Code Review"
+            case .support: "Customer Support"
             case .ticket: "Ticket"
             case .other: "Other"
             }
@@ -58,6 +62,8 @@ struct AddActivitySheet: View {
             switch self {
             case .call: .call
             case .meeting: .meeting
+            case .codeReview: .codeReview
+            case .support: .support
             case .other: .other
             case .ticket: nil
             }
@@ -227,6 +233,8 @@ struct CalendarImportSheet: View {
 
     private static func guessKind(_ event: CalendarEvent) -> Activity.Kind {
         let title = event.title.lowercased()
+        if title.contains("review") || title.contains("pr ") || title.hasPrefix("pr:") { return .codeReview }
+        if title.contains("support") || title.contains("incident") { return .support }
         return title.contains("call") || title.contains("huddle") ? .call : .meeting
     }
 }

@@ -383,24 +383,45 @@ public final class AppStore {
             append(category, SummaryItem(text: ticket.github?.url ?? ticket.title, isLink: ticket.github != nil, notes: ticketNotes))
         }
         for activity in workspaceActivities where activity.duration(in: range, at: now) >= 60 {
-            let title = activity.kind == .other ? activity.kind.title : "Meetings"
-            append(title, SummaryItem(text: activity.title))
+            let title: String
+            switch activity.kind {
+            case .codeReview:
+                title = "Code Reviews"
+            case .support:
+                title = "Customer Support"
+            case .meeting, .call:
+                title = "Meetings & Calls"
+            case .other:
+                title = "Other Activities"
+            }
+            let seconds = activity.duration(in: range, at: now)
+            let activityTitle = activity.title.trimmingCharacters(in: .whitespacesAndNewlines)
+            let baseTitle = activityTitle.isEmpty ? activity.kind.title : activityTitle
+            let itemText = "\(baseTitle) (\(Format.short(seconds)))"
+            append(title, SummaryItem(text: itemText))
         }
         return sections
     }
 
-    /// Plain-text summary with "- " bullets under each category heading.
+    /// Plain-text summary with "• " bullets under each category heading and clean indentation.
     public func daySummaryText(for day: Date, calendar: Calendar = .current, includeDate: Bool = false, includeTomorrow: Bool = false) -> String {
         let sections = daySummarySections(for: day, calendar: calendar)
-        let heading = includeDate ? dateHeading(day) + "\n--------\n" : ""
-        var text = heading + (sections.isEmpty ? "(nothing tracked)" : sections.map { section in
-            ([section.title] + section.items.flatMap { item in
-                ["- \(item.text)"] + item.notes.map { "  - \($0)" }
-            }).joined(separator: "\n")
-        }.joined(separator: "\n"))
+        let heading = includeDate ? dateHeading(day) + "\n=========================\n\n" : ""
+        let body: String
+        if sections.isEmpty {
+            body = "(nothing tracked)"
+        } else {
+            body = sections.map { section in
+                let itemsText = section.items.flatMap { item in
+                    ["• \(item.text)"] + item.notes.map { "  - \($0)" }
+                }.joined(separator: "\n")
+                return "\(section.title)\n\(itemsText)"
+            }.joined(separator: "\n\n")
+        }
+        var text = heading + body
         if includeTomorrow {
             let next = tomorrowPlan(after: day, calendar: calendar)
-            let lines = next.items.isEmpty ? ["- (nothing planned)"] : next.items.map { "- \($0.text)" }
+            let lines = next.items.isEmpty ? ["• (nothing planned)"] : next.items.map { "• \($0.text)" }
             text += "\n\n" + ([next.label, "--------"] + lines).joined(separator: "\n")
         }
         return text
@@ -429,21 +450,26 @@ public final class AppStore {
                 .replacingOccurrences(of: "\"", with: "&quot;")
         }
         let sections = daySummarySections(for: day, calendar: calendar)
-        let heading = includeDate ? "<div>\(esc(dateHeading(day)))</div><div>--------</div>" : ""
+        let heading = includeDate ? "<p style=\"font-weight: bold; margin-bottom: 4px;\">\(esc(dateHeading(day)))</p><hr style=\"border: none; border-top: 1px solid #ccc; margin-bottom: 12px;\">" : ""
         func list(_ items: [SummaryItem]) -> String {
-            "<ul>" + items.map { item -> String in
-                let label = item.isLink ? "<a href=\"\(esc(item.text))\">\(esc(item.text))</a>" : esc(item.text)
-                let notes = item.notes.isEmpty ? "" : "<ul>" + item.notes.map { "<li>\(esc($0))</li>" }.joined() + "</ul>"
+            "<ul style=\"margin-top: 4px; margin-bottom: 12px; padding-left: 20px;\">" + items.map { item -> String in
+                let label: String
+                if item.isLink, let url = URL(string: item.text), url.scheme == "https" || url.scheme == "http" {
+                    label = "<a href=\"\(esc(item.text))\">\(esc(item.text))</a>"
+                } else {
+                    label = esc(item.text)
+                }
+                let notes = item.notes.isEmpty ? "" : "<ul style=\"margin-top: 2px; margin-bottom: 4px; padding-left: 20px;\">" + item.notes.map { "<li>\(esc($0))</li>" }.joined() + "</ul>"
                 return "<li>\(label)\(notes)</li>"
             }.joined() + "</ul>"
         }
         var html = heading + (sections.isEmpty
-            ? "<p>(nothing tracked)</p>"
-            : sections.map { "<div>\(esc($0.title))</div>" + list($0.items) }.joined())
+            ? "<p style=\"color: #666;\">(nothing tracked)</p>"
+            : sections.map { "<p style=\"font-weight: bold; margin-top: 12px; margin-bottom: 4px;\">\(esc($0.title))</p>" + list($0.items) }.joined())
         if includeTomorrow {
             let next = tomorrowPlan(after: day, calendar: calendar)
-            html += "<br><div>\(esc(next.label))</div><div>--------</div>"
-                + (next.items.isEmpty ? "<p>(nothing planned)</p>" : list(next.items))
+            html += "<p style=\"font-weight: bold; margin-top: 16px; margin-bottom: 4px;\">\(esc(next.label))</p><hr style=\"border: none; border-top: 1px solid #ccc; margin-bottom: 8px;\">"
+                + (next.items.isEmpty ? "<p style=\"color: #666;\">(nothing planned)</p>" : list(next.items))
         }
         return html
     }
