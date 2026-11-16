@@ -165,6 +165,8 @@ struct TodayView: View {
                         StatCard(title: "Active tickets", value: "\(active.count)", symbol: "bolt.fill", tint: Theme.warning)
                         StatCard(title: "Calls & meetings", value: Format.short(store.activityTime(in: range)), symbol: "phone.fill", tint: Theme.accentEnd)
                     }
+
+                    TodaySummaryCard(day: day, selectedTicketID: $selectedTicketID)
                 }
 
                 if isToday || isFuture { DayPlanCard(selectedTicketID: $selectedTicketID, day: day) }

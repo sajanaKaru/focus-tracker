@@ -323,7 +323,7 @@ public struct PlanComment: Identifiable, Codable, Hashable, Sendable {
 /// Time spent on something that isn't a ticket: a call, a meeting, etc.
 public struct Activity: Identifiable, Codable, Hashable, Sendable {
     public enum Kind: String, Codable, CaseIterable, Identifiable, Sendable {
-        case call, meeting, other
+        case call, meeting, codeReview, support, other
 
         public var id: String { rawValue }
 
@@ -331,6 +331,8 @@ public struct Activity: Identifiable, Codable, Hashable, Sendable {
             switch self {
             case .call: "Call"
             case .meeting: "Meeting"
+            case .codeReview: "Code Review"
+            case .support: "Customer Support"
             case .other: "Other"
             }
         }
@@ -339,6 +341,8 @@ public struct Activity: Identifiable, Codable, Hashable, Sendable {
             switch self {
             case .call: "phone.fill"
             case .meeting: "person.2.fill"
+            case .codeReview: "doc.text.magnifyingglass"
+            case .support: "headphones"
             case .other: "ellipsis.circle.fill"
             }
         }
