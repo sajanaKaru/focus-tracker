@@ -17,10 +17,12 @@ public struct RemoteIssue: Equatable, Sendable {
     /// nil means "not fetched"; see `GitHubClient.fetchIssueFields`.
     public var issueFields: [CustomField]?
     public var isOpen: Bool
+    public var assignees: [String]
+    public var updatedAt: Date?
 
     public var key: String { "\(repo.lowercased())#\(number)" }
 
-    public init(repo: String, number: Int, title: String, body: String = "", labels: [String] = [], labelColors: [String: String] = [:], url: String, isPullRequest: Bool = false, nodeID: String = "", milestone: Milestone? = nil, fields: [CustomField]? = nil, issueType: IssueType? = nil, issueFields: [CustomField]? = nil, isOpen: Bool = true) {
+    public init(repo: String, number: Int, title: String, body: String = "", labels: [String] = [], labelColors: [String: String] = [:], url: String, isPullRequest: Bool = false, nodeID: String = "", milestone: Milestone? = nil, fields: [CustomField]? = nil, issueType: IssueType? = nil, issueFields: [CustomField]? = nil, isOpen: Bool = true, assignees: [String] = [], updatedAt: Date? = nil) {
         self.repo = repo
         self.number = number
         self.title = title
@@ -35,6 +37,8 @@ public struct RemoteIssue: Equatable, Sendable {
         self.issueType = issueType
         self.issueFields = issueFields
         self.isOpen = isOpen
+        self.assignees = assignees
+        self.updatedAt = updatedAt
     }
 }
 
@@ -64,6 +68,7 @@ public enum GitHubError: LocalizedError {
     case http(Int)
     case invalidResponse
     case graphQL(String)
+    case truncated
 
     public var errorDescription: String? {
         switch self {
@@ -72,6 +77,7 @@ public enum GitHubError: LocalizedError {
         case .http(let code): "GitHub returned HTTP \(code)."
         case .invalidResponse: "Unexpected response from GitHub."
         case .graphQL(let message): message
+        case .truncated: "Too many issues to sync; narrow the repositories in Settings."
         }
     }
 }
@@ -103,7 +109,27 @@ public struct GitHubClient: Sendable {
             URLQueryItem(name: "state", value: "open"),
             URLQueryItem(name: "per_page", value: "100")
         ]
-        var next: URL? = components.url
+        return try await collectIssues(from: components.url, includePullRequests: includePullRequests) {
+            repos.isEmpty || repos.contains($0.repo.lowercased())
+        }
+    }
+
+    /// Open issues in each "owner/name" repo, whoever they are assigned to. Other names are skipped.
+    public func fetchOpenIssues(repos: [String], includePullRequests: Bool = false) async throws -> [RemoteIssue] {
+        var result: [RemoteIssue] = []
+        for repo in repos where Self.isRepoName(repo) {
+            var components = URLComponents(string: "https://\(Self.apiHost)/repos/\(repo)/issues")!
+            components.queryItems = [
+                URLQueryItem(name: "state", value: "open"),
+                URLQueryItem(name: "per_page", value: "100")
+            ]
+            result += try await collectIssues(from: components.url, includePullRequests: includePullRequests) { _ in true }
+        }
+        return result
+    }
+
+    private func collectIssues(from start: URL?, includePullRequests: Bool, keep: (RemoteIssue) -> Bool) async throws -> [RemoteIssue] {
+        var next = start
         var result: [RemoteIssue] = []
         var pages = 0
 
@@ -116,13 +142,25 @@ public struct GitHubClient: Sendable {
             for item in items {
                 guard let issue = item.toRemote() else { continue }
                 if issue.isPullRequest && !includePullRequests { continue }
-                if !repos.isEmpty && !repos.contains(issue.repo.lowercased()) { continue }
+                if !keep(issue) { continue }
                 result.append(issue)
             }
             next = Self.nextURL(from: response.value(forHTTPHeaderField: "Link"))
             pages += 1
         }
+        // Merging a partial list would mark the cut-off issues as closed.
+        if next != nil { throw GitHubError.truncated }
         return result
+    }
+
+    /// The repo name goes into the request path, so only plain owner/name pairs are accepted.
+    static func isRepoName(_ name: String) -> Bool {
+        let parts = name.split(separator: "/", omittingEmptySubsequences: false)
+        guard parts.count == 2 else { return false }
+        return parts.allSatisfy { part in
+            !part.isEmpty && part != "." && part != ".."
+                && part.unicodeScalars.allSatisfy { $0.isASCII && (CharacterSet.alphanumerics.contains($0) || "._-".unicodeScalars.contains($0)) }
+        }
     }
 
     /// Latest state of one issue, e.g. when the user opens a ticket.
@@ -398,6 +436,7 @@ private struct IssueDTO: Decodable {
         let name: String
         let color: String?
     }
+    struct AssigneeDTO: Decodable { let login: String }
 
     let number: Int
     let title: String
@@ -410,6 +449,8 @@ private struct IssueDTO: Decodable {
     let labels: [Label]
     let milestone: MilestoneDTO?
     let pullRequest: PullRequestMarker?
+    let assignees: [AssigneeDTO]?
+    let updatedAt: Date?
 
     func toRemote() -> RemoteIssue? {
         let marker = "/repos/"
@@ -427,7 +468,9 @@ private struct IssueDTO: Decodable {
             nodeID: nodeId ?? "",
             milestone: milestone.map { Milestone(title: $0.title, isOpen: $0.state != "closed", dueOn: $0.dueOn) },
             issueType: type.map { IssueType(name: $0.name, color: $0.color) },
-            isOpen: state != "closed"
+            isOpen: state != "closed",
+            assignees: assignees?.map(\.login) ?? [],
+            updatedAt: updatedAt
         )
     }
 }

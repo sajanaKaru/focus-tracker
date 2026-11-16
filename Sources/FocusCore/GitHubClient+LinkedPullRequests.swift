@@ -18,19 +18,34 @@ public struct LinkedPullRequest: Identifiable, Equatable, Sendable {
     }
 }
 
+public struct PullRequestFilePatch: Equatable, Sendable {
+    public var path: String
+    public var status: String
+    /// Nil for binary and very large files, which GitHub returns without a patch.
+    public var patch: String?
+
+    public init(path: String, status: String, patch: String?) {
+        self.path = path
+        self.status = status
+        self.patch = patch
+    }
+}
+
 public struct PullRequestDetail: Equatable, Sendable {
     public var repo: String
     public var number: Int
     public var title: String
     public var body: String
     public var files: [String]
+    public var patches: [PullRequestFilePatch]
 
-    public init(repo: String, number: Int, title: String, body: String, files: [String]) {
+    public init(repo: String, number: Int, title: String, body: String, files: [String], patches: [PullRequestFilePatch] = []) {
         self.repo = repo
         self.number = number
         self.title = title
         self.body = body
         self.files = files
+        self.patches = patches
     }
 }
 
@@ -60,6 +75,31 @@ extension GitHubClient {
         if envelope.data == nil, let message = envelope.errors?.first?.message { throw GitHubError.graphQL(message) }
         guard let pr = envelope.data?.repository?.pullRequest else { throw GitHubError.invalidResponse }
         return PullRequestDetail(repo: repo, number: number, title: pr.title, body: pr.body ?? "", files: pr.files.nodes.compactMap { $0?.path })
+    }
+
+    /// Per-file patches, up to 300 files (3 pages). Binary and very large files come back without a patch.
+    public func fetchPullRequestPatches(repo: String, number: Int) async throws -> [PullRequestFilePatch] {
+        struct FileItem: Decodable {
+            let filename: String
+            let status: String
+            let patch: String?
+        }
+        let (owner, name) = try Self.split(repo)
+        let safe = #"^[A-Za-z0-9._-]+$"#
+        guard [owner, name].allSatisfy({ $0.range(of: safe, options: .regularExpression) != nil && $0 != "." && $0 != ".." }) else {
+            throw GitHubError.invalidResponse
+        }
+        var result: [PullRequestFilePatch] = []
+        for page in 1...3 {
+            guard let url = URL(string: "https://\(Self.apiHost)/repos/\(owner)/\(name)/pulls/\(number)/files?per_page=100&page=\(page)") else {
+                throw GitHubError.invalidResponse
+            }
+            let (data, _) = try await get(url)
+            let items = try JSONDecoder().decode([FileItem].self, from: data)
+            result += items.map { PullRequestFilePatch(path: $0.filename, status: $0.status, patch: $0.patch) }
+            if items.count < 100 { break }
+        }
+        return result
     }
 
     private static func split(_ repo: String) throws -> (String, String) {

@@ -5,7 +5,7 @@ struct DraftCasesSheet: View {
     @Environment(AppStore.self) private var store
     @Environment(\.dismiss) private var dismiss
     let ticket: Ticket
-
+    var regression = false
     private enum Phase { case loadingPRs, choosing, generating, review }
 
     @State private var phase = Phase.loadingPRs
@@ -14,25 +14,26 @@ struct DraftCasesSheet: View {
     @State private var drafts: [DraftCase] = []
     @State private var kept: Set<UUID> = []
     @State private var error: String?
+    @State private var generation: Task<Void, Never>?
 
     var body: some View {
-        Form {
-            Section { Text("Draft test cases").font(.title2.weight(.bold)) }
-            switch phase {
-            case .loadingPRs:
-                HStack { ProgressView().controlSize(.small); Text("Looking for linked pull requests…") }
-            case .choosing: choosing
-            case .generating:
-                HStack { ProgressView().controlSize(.small); Text("Asking \(store.aiProvider.title)…") }
-            case .review: review
+        SheetScaffold(title: regression ? "Find regressions" : "Draft test cases", subtitle: ticket.displayKey + " · " + ticket.title, width: 720, height: 600) {
+            Form {
+                switch phase {
+                case .loadingPRs:
+                    HStack { ProgressView().controlSize(.small); Text("Looking for linked pull requests…") }
+                case .choosing: choosing
+                case .generating:
+                    HStack { ProgressView().controlSize(.small); Text("Asking \(store.aiProvider.title)…") }
+                case .review: review
+                }
+                if let error { Text(error).font(.callout).foregroundStyle(.red) }
             }
-            if let error { Text(error).font(.callout).foregroundStyle(.red) }
+        } footer: {
             actions
         }
-        .formStyle(.grouped)
-        .frame(width: 520)
-        .padding()
         .task { await loadPullRequests() }
+        .onDisappear { generation?.cancel() }
     }
 
     @ViewBuilder private var choosing: some View {
@@ -52,11 +53,14 @@ struct DraftCasesSheet: View {
                 }
             }
         }
-        Text("The ticket text, the chosen pull requests' titles, descriptions and changed file names are sent to \(store.aiProvider.title). Source code is not sent.")
+        Text(store.aiCodeAccess.disclosure(provider: store.aiProvider))
             .font(.caption).foregroundStyle(.secondary)
     }
 
     @ViewBuilder private var review: some View {
+        if let note = store.draftNote {
+            Text(note).font(.caption).foregroundStyle(.secondary)
+        }
         ForEach(drafts) { draft in
             Toggle(isOn: Binding(
                 get: { kept.contains(draft.id) },
@@ -64,6 +68,7 @@ struct DraftCasesSheet: View {
             )) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(draft.title).fontWeight(.medium)
+                    if !draft.risk.isEmpty { Text("Risk: \(draft.risk)").font(.caption).foregroundStyle(Theme.warning) }
                     if !draft.steps.isEmpty { Text(draft.steps).font(.caption).foregroundStyle(.secondary) }
                     if !draft.expected.isEmpty { Text("Expected: \(draft.expected)").font(.caption).foregroundStyle(.secondary) }
                 }
@@ -71,22 +76,22 @@ struct DraftCasesSheet: View {
         }
     }
 
-    private var actions: some View {
-        HStack {
-            Spacer()
-            Button(role: .cancel) { dismiss() } label: { ShortcutLabel(title: "Cancel", keys: "⎋") }
-                .keyboardShortcut(.cancelAction)
-            switch phase {
-            case .choosing:
-                Button { Task { await generate() } } label: { ShortcutLabel(title: error == nil ? "Draft" : "Retry", keys: "↩") }
-                    .keyboardShortcut(.defaultAction)
-            case .review:
-                Button(action: add) { ShortcutLabel(title: "Add \(kept.count) selected", keys: "↩") }
-                    .keyboardShortcut(.defaultAction)
-                    .disabled(kept.isEmpty)
-            case .loadingPRs, .generating:
-                EmptyView()
-            }
+    @ViewBuilder private var actions: some View {
+        Button(role: .cancel) { generation?.cancel(); dismiss() } label: { ShortcutLabel(title: "Cancel", keys: "⎋") }
+            .buttonStyle(.secondary)
+            .keyboardShortcut(.cancelAction)
+        switch phase {
+        case .choosing:
+            Button { generation = Task { await generate() } } label: { ShortcutLabel(title: error == nil ? "Draft" : "Retry", keys: "↩") }
+                .buttonStyle(.primary)
+                .keyboardShortcut(.defaultAction)
+        case .review:
+            Button(action: add) { ShortcutLabel(title: "Add \(kept.count) selected", keys: "↩") }
+                .buttonStyle(.primary)
+                .keyboardShortcut(.defaultAction)
+                .disabled(kept.isEmpty)
+        case .loadingPRs, .generating:
+            EmptyView()
         }
     }
 
@@ -104,10 +109,11 @@ struct DraftCasesSheet: View {
         error = nil
         phase = .generating
         do {
-            drafts = try await store.draftTestCases(ticketID: ticket.id, pullRequests: linked.filter { chosenPRs.contains($0.id) })
+            drafts = try await store.draftTestCases(ticketID: ticket.id, pullRequests: linked.filter { chosenPRs.contains($0.id) }, regression: regression)
             kept = Set(drafts.map(\.id))
             phase = .review
         } catch {
+            if error is CancellationError || Task.isCancelled { return }
             self.error = error.localizedDescription
             phase = .choosing
         }

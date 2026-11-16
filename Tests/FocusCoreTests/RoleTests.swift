@@ -4,7 +4,7 @@ import XCTest
 final class RoleTests: XCTestCase {
     func testDevKeepsEverySectionAndLandsOnToday() {
         let profile = UserRole.dev.profile
-        XCTAssertEqual(profile.sections, [.today, .tickets, .board, .pullRequests, .specialWork, .reports, .actionLog])
+        XCTAssertEqual(profile.sections, [.today, .tickets, .board, .pullRequests, .specialWork, .reports, .actionLog, .backup])
         XCTAssertFalse(profile.sections.contains(.qaQueue))
         XCTAssertEqual(profile.landing, .today)
         XCTAssertEqual(profile.captureKind, .bug)
@@ -15,7 +15,7 @@ final class RoleTests: XCTestCase {
             let sections = role.profile.sections
             XCTAssertFalse(sections.contains(.pullRequests), "\(role)")
             XCTAssertFalse(sections.contains(.specialWork), "\(role)")
-            XCTAssertEqual(sections, [.today, .qaQueue, .tickets, .board, .reports, .actionLog], "\(role)")
+            XCTAssertEqual(sections, [.today, .qaQueue, .tickets, .board, .reports, .actionLog, .backup], "\(role)")
         }
     }
 

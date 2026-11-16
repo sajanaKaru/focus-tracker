@@ -17,6 +17,9 @@ public enum PrefKey {
     public static let role = "userRole"
     public static let aiProvider = "aiProvider"
     public static let aiModelPrefix = "aiModel."
+    public static let aiIncludeCode = "aiIncludeCode"
+    public static let aiCodeAccess = "aiCodeAccess"
+    public static let copilotPath = "copilotPath"
 }
 
 public enum SyncState: Equatable, Sendable {
@@ -48,6 +51,9 @@ public final class AppStore {
     public private(set) var planComments: [PlanComment] = []
     public private(set) var activities: [Activity] = []
     public private(set) var dayPlans: [DayPlan] = []
+    /// Kept apart from `dayPlans` so a QA plan and a Dev plan for the same day never mix.
+    public internal(set) var qaDayPlans: [DayPlan] = []
+    public internal(set) var qaMilestonePlans: [QAMilestonePlan] = []
     public private(set) var actionLog: [ActionLogEntry] = []
     public internal(set) var testCases: [TestCase] = []
     public internal(set) var testResults: [TestResult] = []
@@ -75,12 +81,18 @@ public final class AppStore {
     public private(set) var now = Date()
     public private(set) var syncState: SyncState = .idle
     public var notice: String?
+    /// What the last draft read from the repository, shown in the draft sheet.
+    public internal(set) var draftNote: String?
 
-    @ObservationIgnored private let storeURL: URL
+    public internal(set) var backupVersions: [BackupVersion] = []
+
+    @ObservationIgnored let storeURL: URL
+    @ObservationIgnored let backupVault: BackupVault
     @ObservationIgnored let defaults: UserDefaults
     @ObservationIgnored let transport: HTTPTransport
     @ObservationIgnored let tokenProvider: () -> String?
     @ObservationIgnored let aiKeyProvider: (AIProvider) -> String?
+    @ObservationIgnored let copilotChannel: (@Sendable (URL) throws -> ACPChannel)?
     @ObservationIgnored private var lastOptionsLoad: Date?
     @ObservationIgnored private let idleSeconds: () -> TimeInterval
     @ObservationIgnored private var tickTask: Task<Void, Never>?
@@ -103,13 +115,16 @@ public final class AppStore {
         transport: HTTPTransport = URLSessionTransport(),
         tokenProvider: @escaping () -> String? = { Keychain.get(account: Keychain.githubAccount) },
         idleSeconds: @escaping () -> TimeInterval = IdleTime.current,
-        aiKeyProvider: @escaping (AIProvider) -> String? = { Keychain.get(account: $0.keychainAccount) }
+        aiKeyProvider: @escaping (AIProvider) -> String? = { Keychain.get(account: $0.keychainAccount) },
+        copilotChannel: (@Sendable (URL) throws -> ACPChannel)? = nil
     ) {
         self.storeURL = storeURL
+        backupVault = BackupVault(directory: storeURL.deletingLastPathComponent().appendingPathComponent("Backups", isDirectory: true))
         self.defaults = defaults
         self.transport = transport
         self.tokenProvider = tokenProvider
         self.aiKeyProvider = aiKeyProvider
+        self.copilotChannel = copilotChannel
         self.idleSeconds = idleSeconds
         githubLogin = defaults.string(forKey: PrefKey.githubLogin)
         hiddenWorkspaces = Set(defaults.stringArray(forKey: PrefKey.hiddenWorkspaces) ?? [])
@@ -818,6 +833,13 @@ public final class AppStore {
         autoSyncTask = nil
     }
 
+    /// Re-arms the timer so a changed interval applies now instead of after the current wait.
+    public func restartAutoSync() {
+        guard autoSyncTask != nil else { return }
+        stopAutoSync()
+        startAutoSync()
+    }
+
     public func syncGitHub() async {
         guard syncState != .syncing else { return }
         guard let token = tokenProvider(), !token.isEmpty else {
@@ -825,10 +847,16 @@ public final class AppStore {
             return
         }
         syncState = .syncing
+        let fetchedTeamIssues = syncsTeamIssues
         do {
             let includePRs = defaults.bool(forKey: PrefKey.includePRs)
             let client = GitHubClient(token: token, transport: transport)
-            let remote = try await client.fetchAssignedIssues(repos: configuredRepos, includePullRequests: includePRs)
+            let remote: [RemoteIssue]
+            if fetchedTeamIssues {
+                remote = try await client.fetchOpenIssues(repos: configuredRepos.sorted(), includePullRequests: includePRs)
+            } else {
+                remote = try await client.fetchAssignedIssues(repos: configuredRepos, includePullRequests: includePRs)
+            }
             var enriched = await withProjectFields(remote, client: client)
             let issueFields = await client.fetchIssueFields(for: enriched)
             for i in enriched.indices {
@@ -843,6 +871,8 @@ public final class AppStore {
         }
         if case .succeeded = syncState { await loadOptions() }
         await refreshPullRequests()
+        // The role changed mid-sync, so the results are for the old scope; this only repeats if it changes again.
+        if syncsTeamIssues != fetchedTeamIssues { await syncGitHub() }
     }
 
     /// Lowercased "owner/name" entries from Settings; empty means every repo.
@@ -852,6 +882,15 @@ public final class AppStore {
                 .split(whereSeparator: { $0 == "," || $0.isWhitespace })
                 .map { $0.lowercased() }
         )
+    }
+
+    /// PM sees every open issue in the configured repos; other roles, and PM without repos, sync issues assigned to the user.
+    public var syncsTeamIssues: Bool { role == .pm && !configuredRepos.isEmpty }
+
+    /// Switching into or out of PM changes which issues are fetched, so refresh once.
+    public func roleDidChange(from old: UserRole) async {
+        guard (old == .pm) != (role == .pm), tokenProvider() != nil else { return }
+        await syncGitHub()
     }
 
     // MARK: - My pull requests
@@ -987,6 +1026,8 @@ public final class AppStore {
         if !keep.contains("Milestone") { ticket.milestone = issue.milestone }
         if let fields = issue.fields { ticket.fields = preserving(fields, keeping: keep, from: local.fields) }
         ticket.issueType = issue.issueType
+        ticket.assignees = issue.assignees
+        ticket.remoteUpdatedAt = issue.updatedAt
         if let fields = issue.issueFields { ticket.issueFields = preserving(fields, keeping: keep, from: local.issueFields) }
         deriveFromFields(&ticket, keep: keep)
     }
@@ -1043,7 +1084,9 @@ public final class AppStore {
                     issueFields: issue.issueFields,
                     createdAt: now,
                     updatedAt: now,
-                    github: GitHubRef(repo: issue.repo, number: issue.number, url: issue.url, isPullRequest: issue.isPullRequest)
+                    github: GitHubRef(repo: issue.repo, number: issue.number, url: issue.url, isPullRequest: issue.isPullRequest),
+                    assignees: issue.assignees,
+                    remoteUpdatedAt: issue.updatedAt
                 )
                 deriveFromFields(&created, keep: [])
                 result.append(created)
@@ -1075,7 +1118,7 @@ public final class AppStore {
     }
 
     /// Ranked suggestions for `day`; tickets from the most recent earlier non-empty plan that are still open rank as carried over.
-    /// A day off lists only the tickets already planned on it.
+    /// While a sprint is current, only its tickets are suggested. A day off lists only the tickets already planned on it.
     public func planCandidates(for day: Date, calendar: Calendar = .current) -> [PlanCandidate] {
         let start = calendar.startOfDay(for: day)
         let earlier = dayPlans
@@ -1087,13 +1130,18 @@ public final class AppStore {
             .mapValues { Int(($0.reduce(0) { $0 + $1.duration(at: now) } / 60).rounded()) }
         // A future day is ranked as of its own start so "due now" means due by then.
         let ranked = DayPlanner.rank(
-            tickets: workspaceTickets, carriedOver: carried, now: max(now, start), settings: planSettings, calendar: calendar,
+            tickets: sprintScoped(workspaceTickets), carriedOver: carried, now: max(now, start), settings: planSettings, calendar: calendar,
             trackedMinutes: tracked, plannedAheadMinutes: plannedAheadMinutes(before: start, tracked: tracked, calendar: calendar)
         )
         let planned = Set(plan(for: day, calendar: calendar)?.ticketIDs ?? [])
         guard planSettings.isWorkingDay(day, calendar: calendar) else { return ranked.filter { planned.contains($0.id) } }
         // Tickets the earlier planned days are expected to finish drop out, unless already planned on this day.
         return ranked.filter { $0.plannedAheadMinutes == 0 || $0.estimateMinutes > 0 || planned.contains($0.id) }
+    }
+
+    private func sprintScoped(_ tickets: [Ticket]) -> [Ticket] {
+        guard hasCurrentSprint else { return tickets }
+        return tickets.filter { $0.sprints.contains { $0.isCurrent(at: now) } }
     }
 
     /// Work that planned working days from today up to `start` are expected to use of each ticket.
@@ -1423,6 +1471,8 @@ public final class AppStore {
         var testResults: [TestResult]?
         var testVerdicts: [TestVerdict]?
         var bugReports: [BugReport]?
+        var qaDayPlans: [DayPlan]?
+        var qaMilestonePlans: [QAMilestonePlan]?
     }
 
     /// Older files stored one free-text `notes` string per ticket.
@@ -1437,31 +1487,71 @@ public final class AppStore {
 
     private func load() {
         guard let data = try? Data(contentsOf: storeURL) else { return }
+        do {
+            try apply(data)
+        } catch {
+            notice = "Could not read saved data: \(error.localizedDescription)"
+        }
+    }
+
+    /// Replaces all stored data with the contents of a data file at `url`; the current data is backed up first.
+    @discardableResult
+    public func restore(from url: URL) -> Bool {
+        let data: Data
+        do {
+            data = try Data(contentsOf: url)
+            _ = try decodeSnapshot(data)
+        } catch {
+            notice = "Could not restore: this is not a valid Focus Tracker backup (\(error.localizedDescription))"
+            return false
+        }
+        guard createBackup() != nil else { return false }
+        do {
+            try apply(data)
+        } catch {
+            notice = "Could not restore: \(error.localizedDescription)"
+            return false
+        }
+        save()
+        issueComments = [:]
+        if activeEntry != nil || activeActivity != nil { startTicking() }
+        notice = "Backup restored."
+        return true
+    }
+
+    private func decodeSnapshot(_ data: Data) throws -> Snapshot {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
-        do {
-            let snapshot = try decoder.decode(Snapshot.self, from: data)
-            tickets = snapshot.tickets
-            entries = snapshot.entries
-            activities = snapshot.activities ?? []
-            planComments = snapshot.planComments ?? []
-            dayPlans = snapshot.dayPlans ?? []
-            actionLog = snapshot.actionLog ?? []
-            remoteOptions = snapshot.remoteOptions ?? RemoteOptions()
-            testCases = snapshot.testCases ?? []
-            testResults = snapshot.testResults ?? []
-            testVerdicts = snapshot.testVerdicts ?? []
-            bugReports = snapshot.bugReports ?? []
-            if let saved = snapshot.notes {
-                notes = saved
-            } else if let legacy = try? decoder.decode(LegacySnapshot.self, from: data) {
+        return try decoder.decode(Snapshot.self, from: data)
+    }
+
+    private func apply(_ data: Data) throws {
+        let snapshot = try decodeSnapshot(data)
+        notes = []
+        tickets = snapshot.tickets
+        entries = snapshot.entries
+        activities = snapshot.activities ?? []
+        planComments = snapshot.planComments ?? []
+        dayPlans = snapshot.dayPlans ?? []
+        actionLog = snapshot.actionLog ?? []
+        remoteOptions = snapshot.remoteOptions ?? RemoteOptions()
+        testCases = snapshot.testCases ?? []
+        testResults = snapshot.testResults ?? []
+        testVerdicts = snapshot.testVerdicts ?? []
+        bugReports = snapshot.bugReports ?? []
+        qaDayPlans = snapshot.qaDayPlans ?? []
+        qaMilestonePlans = snapshot.qaMilestonePlans ?? []
+        if let saved = snapshot.notes {
+            notes = saved
+        } else {
+            let decoder = JSONDecoder()
+            decoder.dateDecodingStrategy = .iso8601
+            if let legacy = try? decoder.decode(LegacySnapshot.self, from: data) {
                 notes = legacy.tickets.compactMap { t in
                     let text = (t.notes ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
                     return text.isEmpty ? nil : TicketNote(ticketID: t.id, text: text, createdAt: t.updatedAt)
                 }
             }
-        } catch {
-            notice = "Could not read saved data: \(error.localizedDescription)"
         }
     }
 
@@ -1474,7 +1564,7 @@ public final class AppStore {
             let snapshot = Snapshot(
                 tickets: tickets, entries: entries, notes: notes, planComments: planComments, activities: activities, dayPlans: dayPlans,
                 actionLog: actionLog, remoteOptions: remoteOptions, testCases: testCases, testResults: testResults,
-                testVerdicts: testVerdicts, bugReports: bugReports
+                testVerdicts: testVerdicts, bugReports: bugReports, qaDayPlans: qaDayPlans, qaMilestonePlans: qaMilestonePlans
             )
             let data = try encoder.encode(snapshot)
             try data.write(to: storeURL, options: .atomic)

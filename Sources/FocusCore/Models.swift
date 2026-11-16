@@ -170,6 +170,10 @@ public struct Ticket: Identifiable, Codable, Hashable, Sendable {
     public var unsynced: [String]?
     /// Last status move into a deployment, read from the issue's project history.
     public var deployment: DeploymentMark?
+    /// GitHub logins the issue is assigned to; nil until the first sync that reports them.
+    public var assignees: [String]?
+    /// GitHub `updated_at`; `updatedAt` is rewritten on every sync, so it cannot show staleness.
+    public var remoteUpdatedAt: Date?
 
     public init(
         id: UUID = UUID(),
@@ -190,7 +194,9 @@ public struct Ticket: Identifiable, Codable, Hashable, Sendable {
         github: GitHubRef? = nil,
         isQuickCapture: Bool? = nil,
         unsynced: [String]? = nil,
-        deployment: DeploymentMark? = nil
+        deployment: DeploymentMark? = nil,
+        assignees: [String]? = nil,
+        remoteUpdatedAt: Date? = nil
     ) {
         self.id = id
         self.title = title
@@ -211,6 +217,8 @@ public struct Ticket: Identifiable, Codable, Hashable, Sendable {
         self.isQuickCapture = isQuickCapture
         self.unsynced = unsynced
         self.deployment = deployment
+        self.assignees = assignees
+        self.remoteUpdatedAt = remoteUpdatedAt
     }
 
     public var displayKey: String {

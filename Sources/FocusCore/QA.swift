@@ -45,14 +45,38 @@ public struct TestCase: Identifiable, Codable, Hashable, Sendable {
     public var steps: String
     public var expected: String
     public var createdAt: Date
+    /// For regression cases: what existing behavior could break and why.
+    public var risk: String
+    public var isRegression: Bool
 
-    public init(id: UUID = UUID(), ticketID: UUID, title: String, steps: String = "", expected: String = "", createdAt: Date = Date()) {
+    public init(
+        id: UUID = UUID(), ticketID: UUID, title: String, steps: String = "", expected: String = "", createdAt: Date = Date(),
+        risk: String = "", isRegression: Bool = false
+    ) {
         self.id = id
         self.ticketID = ticketID
         self.title = title
         self.steps = steps
         self.expected = expected
         self.createdAt = createdAt
+        self.risk = risk
+        self.isRegression = isRegression
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, ticketID, title, steps, expected, createdAt, risk, isRegression
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(UUID.self, forKey: .id)
+        ticketID = try c.decode(UUID.self, forKey: .ticketID)
+        title = try c.decode(String.self, forKey: .title)
+        steps = try c.decode(String.self, forKey: .steps)
+        expected = try c.decode(String.self, forKey: .expected)
+        createdAt = try c.decode(Date.self, forKey: .createdAt)
+        risk = try c.decodeIfPresent(String.self, forKey: .risk) ?? ""
+        isRegression = try c.decodeIfPresent(Bool.self, forKey: .isRegression) ?? false
     }
 }
 
@@ -140,6 +164,50 @@ public struct BugReport: Identifiable, Codable, Hashable, Sendable {
         self.issueNumber = issueNumber
         self.issueURL = issueURL
         self.state = state
+    }
+}
+
+/// A QA test plan for one GitHub milestone; its tickets and progress are derived, only the choices QA made are stored.
+public struct QAMilestonePlan: Identifiable, Codable, Hashable, Sendable {
+    public var id: UUID
+    public var milestone: String
+    public var targetDate: Date?
+    public var excludedTicketIDs: [UUID]
+    public var archived: Bool
+    public var createdAt: Date
+
+    public init(
+        id: UUID = UUID(), milestone: String, targetDate: Date? = nil, excludedTicketIDs: [UUID] = [],
+        archived: Bool = false, createdAt: Date = Date()
+    ) {
+        self.id = id
+        self.milestone = milestone
+        self.targetDate = targetDate
+        self.excludedTicketIDs = excludedTicketIDs
+        self.archived = archived
+        self.createdAt = createdAt
+    }
+}
+
+/// A milestone plan's tickets (verified ones included) with the numbers shown on its card.
+public struct QAMilestoneProgress: Equatable, Sendable {
+    public var plan: QAMilestonePlan
+    public var tickets: [QAPlanCandidate]
+
+    public var total: Int { tickets.count }
+    public var verified: Int { count(.verified) }
+    public var fraction: Double { total == 0 ? 0 : Double(verified) / Double(total) }
+    public var remainingMinutes: Int { tickets.filter { $0.state != .verified }.reduce(0) { $0 + $1.estimateMinutes } }
+
+    public func count(_ state: QAState) -> Int { tickets.filter { $0.state == state }.count }
+
+    public func daysRemaining(at now: Date, calendar: Calendar = .current) -> Int? {
+        guard let target = plan.targetDate else { return nil }
+        return calendar.dateComponents([.day], from: calendar.startOfDay(for: now), to: calendar.startOfDay(for: target)).day
+    }
+
+    public func isOverdue(at now: Date, calendar: Calendar = .current) -> Bool {
+        (daysRemaining(at: now, calendar: calendar) ?? 0) < 0 && verified < total
     }
 }
 

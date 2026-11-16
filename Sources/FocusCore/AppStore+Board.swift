@@ -14,6 +14,11 @@ public struct BoardColumn: Identifiable, Equatable, Sendable {
 }
 
 extension AppStore {
+    /// Tickets for the board. Ones no longer assigned to you or closed on GitHub are left off; they stay in the ticket list.
+    public func boardTickets(matching filter: TicketFilter) -> [Ticket] {
+        tickets(matching: filter).filter { $0.github?.remoteClosed != true }
+    }
+
     public var boardColumns: [BoardColumn] {
         let projects = Set(workspaceTickets.compactMap { $0.projectStatusField?.project })
         var columns: [BoardColumn] = []

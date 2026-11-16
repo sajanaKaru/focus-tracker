@@ -169,7 +169,7 @@ struct DayPlanCard: View {
         .padding(.horizontal, 14)
         .padding(.vertical, 8)
         .contentShape(Rectangle())
-        .onTapGesture { selectedTicketID = candidate.id }
+        .selectsTicket(candidate.id, selection: $selectedTicketID)
     }
 
     private func liveSection(_ load: DayLoad, workingDay: Bool) -> some View {
@@ -219,7 +219,7 @@ struct DayPlanCard: View {
                     .padding(.horizontal, 14)
                     .padding(.vertical, 8)
                     .contentShape(Rectangle())
-                    .onTapGesture { selectedTicketID = candidate.id }
+                    .selectsTicket(candidate.id, selection: $selectedTicketID)
                 }
             }
             .cardStyle(padding: 0)

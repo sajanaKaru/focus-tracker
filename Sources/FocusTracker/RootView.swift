@@ -11,6 +11,7 @@ enum SidebarItem: String, CaseIterable, Identifiable {
     case reports = "Reports"
     case actionLog = "Action Log"
     case qaQueue = "QA Queue"
+    case backup = "Backup"
 
     var id: String { rawValue }
 
@@ -24,6 +25,7 @@ enum SidebarItem: String, CaseIterable, Identifiable {
         case .reports: "chart.bar"
         case .actionLog: "list.clipboard"
         case .qaQueue: "checklist.checked"
+        case .backup: "externaldrive"
         }
     }
 
@@ -37,6 +39,7 @@ enum SidebarItem: String, CaseIterable, Identifiable {
         case .reports: self = .reports
         case .actionLog: self = .actionLog
         case .qaQueue: self = .qaQueue
+        case .backup: self = .backup
         }
     }
 }
@@ -102,6 +105,7 @@ struct RootView: View {
     @State private var selection: SidebarItem?
     @State private var selectedTicketID: UUID?
     @State private var planTicketID: UUID?
+    @State private var ticketPageID: UUID?
     @State private var showingNewTicket = false
     @State private var filter = TicketFilter()
     @State private var logFilter = ActionLogFilter()
@@ -120,8 +124,15 @@ struct RootView: View {
     private func openTicket(_ ticket: Ticket) {
         planTicketID = nil
         selectedTicketID = ticket.id
+        if ticketPageID != nil { ticketPageID = ticket.id }
         searchText = ""
         searchFocused = false
+    }
+
+    private func openTicketPage(_ id: UUID) {
+        planTicketID = nil
+        selectedTicketID = id
+        ticketPageID = id
     }
 
     /// Return opens the best match: the first ticket, else the first pull request.
@@ -161,6 +172,7 @@ struct RootView: View {
                     TicketDetailView(
                         ticketID: id,
                         onPlan: { planTicketID = id },
+                        onOpenPage: { openTicketPage(id) },
                         onShowLog: {
                             logFilter = ActionLogFilter(ticketID: id)
                             selection = .actionLog
@@ -171,6 +183,7 @@ struct RootView: View {
             }
         }
         .toolbarBackground(.hidden, for: .windowToolbar)
+        .environment(\.openTicketPage, { openTicketPage($0) })
         .overlay(alignment: .top) { TitleBarStrip() }
         .background {
             Button("Search") { searchFocused = true }
@@ -213,11 +226,16 @@ struct RootView: View {
                 selectedTicketID = id
             }
         }
-        .onChange(of: selection) { planTicketID = nil }
-        .onChange(of: store.role) {
+        .onChange(of: selection) {
+            planTicketID = nil
+            ticketPageID = nil
+        }
+        .onChange(of: store.role) { old, _ in
             if let selection, !visibleItems.contains(selection) { self.selection = nil }
+            Task { await store.roleDidChange(from: old) }
         }
         .onChange(of: store.activeWorkspace) {
+            ticketPageID = nil
             filter.repo = nil
             todayFilter.repo = nil
             selectedTicketID = nil
@@ -258,13 +276,19 @@ struct RootView: View {
     }
 
     private var inspectorShown: Binding<Bool> {
-        Binding(get: { selectedTicketID != nil && planTicketID == nil }, set: { if !$0 { selectedTicketID = nil } })
+        Binding(get: { selectedTicketID != nil && planTicketID == nil && ticketPageID == nil }, set: { if !$0 { selectedTicketID = nil } })
     }
 
     @ViewBuilder
     private var content: some View {
         if let id = planTicketID {
             PlanPage(ticketID: id) { planTicketID = nil }
+        } else if let id = ticketPageID {
+            TicketPage(
+                ticketID: id,
+                onBack: { ticketPageID = nil },
+                onPlan: { planTicketID = id }
+            )
         } else {
             sidebarContent
         }
@@ -285,6 +309,7 @@ struct RootView: View {
         case .reports: ReportsView()
         case .actionLog: ActionLogView(selectedTicketID: $selectedTicketID, filter: $logFilter)
         case .qaQueue: QAQueueView(selectedTicketID: $selectedTicketID)
+        case .backup: BackupView()
         }
     }
 
@@ -424,27 +449,25 @@ struct NewTicketSheet: View {
     var onCreate: (UUID) -> Void
 
     var body: some View {
-        Form {
-            Section { Text("New Ticket").font(.title2.weight(.bold)) }
-            TextField("Title", text: $title)
-            Picker("Priority", selection: $priority) {
-                ForEach(Priority.allCases) { Text($0.title).tag($0) }
+        SheetScaffold(title: "New Ticket") {
+            Form {
+                TextField("Title", text: $title)
+                Picker("Priority", selection: $priority) {
+                    ForEach(Priority.allCases) { Text($0.title).tag($0) }
+                }
             }
-            HStack {
-                Spacer()
-                Button(role: .cancel) { dismiss() } label: { ShortcutLabel(title: "Cancel", keys: "⎋") }
-                    .keyboardShortcut(.cancelAction)
-                Button {
-                    let ticket = store.addTicket(title: title.trimmingCharacters(in: .whitespaces), priority: priority)
-                    onCreate(ticket.id)
-                    dismiss()
-                } label: { ShortcutLabel(title: "Create", keys: "↩") }
-                .keyboardShortcut(.defaultAction)
-                .disabled(title.trimmingCharacters(in: .whitespaces).isEmpty)
-            }
+        } footer: {
+            Button(role: .cancel) { dismiss() } label: { ShortcutLabel(title: "Cancel", keys: "⎋") }
+                .buttonStyle(.secondary)
+                .keyboardShortcut(.cancelAction)
+            Button {
+                let ticket = store.addTicket(title: title.trimmingCharacters(in: .whitespaces), priority: priority)
+                onCreate(ticket.id)
+                dismiss()
+            } label: { ShortcutLabel(title: "Create", keys: "↩") }
+            .buttonStyle(.primary)
+            .keyboardShortcut(.defaultAction)
+            .disabled(title.trimmingCharacters(in: .whitespaces).isEmpty)
         }
-        .formStyle(.grouped)
-        .frame(width: 420)
-        .padding()
     }
 }

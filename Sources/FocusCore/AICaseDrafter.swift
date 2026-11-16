@@ -1,7 +1,7 @@
 import Foundation
 
 public enum AIProvider: String, CaseIterable, Identifiable, Codable, Sendable {
-    case openAI, anthropic, gemini
+    case openAI, anthropic, gemini, copilot
 
     public var id: String { rawValue }
 
@@ -10,6 +10,7 @@ public enum AIProvider: String, CaseIterable, Identifiable, Codable, Sendable {
         case .openAI: "OpenAI"
         case .anthropic: "Anthropic"
         case .gemini: "Gemini"
+        case .copilot: "GitHub Copilot"
         }
     }
 
@@ -17,11 +18,15 @@ public enum AIProvider: String, CaseIterable, Identifiable, Codable, Sendable {
         switch self {
         case .openAI: "gpt-4o-mini"
         case .anthropic: "claude-sonnet-4-5"
-        case .gemini: "gemini-2.0-flash"
+        case .gemini: "gemini-2.5-flash"
+        case .copilot: "auto"
         }
     }
 
     public var keychainAccount: String { "ai-key-\(rawValue)" }
+
+    /// Copilot signs in through the Copilot CLI instead of a key.
+    public var usesAPIKey: Bool { self != .copilot }
 }
 
 public struct DraftCase: Identifiable, Equatable, Sendable {
@@ -29,11 +34,15 @@ public struct DraftCase: Identifiable, Equatable, Sendable {
     public var title: String
     public var steps: String
     public var expected: String
+    public var risk: String
+    public var isRegression: Bool
 
-    public init(title: String, steps: String = "", expected: String = "") {
+    public init(title: String, steps: String = "", expected: String = "", risk: String = "", isRegression: Bool = false) {
         self.title = title
         self.steps = steps
         self.expected = expected
+        self.risk = risk
+        self.isRegression = isRegression
     }
 }
 
@@ -43,8 +52,13 @@ public enum AIError: LocalizedError, Equatable {
     case rateLimited(AIProvider)
     case http(Int, AIProvider)
     case invalidModel
-    case unreadableReply
+    case modelNotFound(String, AIProvider, String)
+    case unreadableReply(String)
     case noCases
+    case copilotNotInstalled
+    case copilotNotSignedIn
+    case copilotNoEnabledModels
+    case copilotFailed(String)
 
     public var errorDescription: String? {
         switch self {
@@ -53,36 +67,80 @@ public enum AIError: LocalizedError, Equatable {
         case .rateLimited(let p): "\(p.title) rate limit reached. Try again later."
         case .http(let code, let p): "\(p.title) returned HTTP \(code)."
         case .invalidModel: "The model name is not valid. Check it in Settings."
-        case .unreadableReply: "The AI reply could not be read. Try again."
+        case .modelNotFound(let m, let p, let detail): "\(p.title) returned 404 for model \"\(m)\": \(detail)"
+        case .unreadableReply(let preview):
+            preview.isEmpty ? "The AI reply could not be read. Try again." : "The AI reply could not be read. It said: \"\(preview)\""
         case .noCases: "The AI returned no test cases."
+        case .copilotNotInstalled: "GitHub Copilot CLI not found. Install it or set its path in Settings."
+        case .copilotNotSignedIn: "Run `copilot login` in a terminal, then try again."
+        case .copilotNoEnabledModels: "Your GitHub Copilot account has no enabled models."
+        case .copilotFailed(let message): "GitHub Copilot: \(message)"
         }
+    }
+
+    /// The start of an unreadable reply, on one line, for the error message.
+    static func preview(_ text: String) -> String {
+        let flat = text.split(whereSeparator: \.isNewline).joined(separator: " ").trimmingCharacters(in: .whitespaces)
+        return flat.count > 200 ? String(flat.prefix(200)) + "…" : flat
     }
 }
 
 public struct DraftPrompt: Equatable, Sendable {
     public var system: String
     public var user: String
+    /// Marks the parsed cases as regression cases.
+    public var regression: Bool
 
     static let maxTicketBody = 4000
     static let maxPRBody = 3000
     static let maxFiles = 100
+    static let maxPatchPerFile = 4000
+    static let maxPatchTotal = 24000
 
-    public init(system: String, user: String) {
+    public init(system: String, user: String, regression: Bool = false) {
         self.system = system
         self.user = user
+        self.regression = regression
     }
 
     public static func make(ticketKey: String, title: String, body: String, pullRequests: [PullRequestDetail]) -> DraftPrompt {
-        let system = """
+        var system = """
         You are a QA engineer. From the ticket and pull request details, write concise manual test cases that verify the change. \
         Cover the main behavior, edge cases and likely regressions. \
         Reply with JSON only, in this shape: {"cases":[{"title":"...","steps":["..."],"expected":"..."}]}. \
         Write 3 to 10 cases. Do not invent features that are not described.
         """
+        if hasCode(pullRequests) {
+            system += " Use the code changes to make steps and expected results specific, and do not invent behavior that is not visible in them."
+        }
+        return DraftPrompt(system: system, user: context(ticketKey: ticketKey, title: title, body: body, pullRequests: pullRequests))
+    }
+
+    /// Asks for existing behavior the change could break, each with steps to reproduce the breakage.
+    public static func makeRegression(ticketKey: String, title: String, body: String, pullRequests: [PullRequestDetail]) -> DraftPrompt {
+        var system = """
+        You are a QA engineer doing regression analysis. From the ticket and pull request details, identify existing behavior \
+        that this change could break: neighbouring features, shared code paths, changed defaults, data, permissions and integrations. \
+        Do not test the new behavior itself. For each potential regression write a test case. \
+        Reply with JSON only, in this shape: {"cases":[{"title":"the regression that could happen","risk":"why this change could cause it","steps":["steps to reproduce it"],"expected":"correct behavior that must still hold"}]}. \
+        Write 3 to 8 cases, most likely first. Make steps concrete. Do not invent features that are not described.
+        """
+        if hasCode(pullRequests) {
+            system += " Name the changed files or functions in each risk, and do not invent behavior that is not visible in the code changes."
+        }
+        return DraftPrompt(system: system, user: context(ticketKey: ticketKey, title: title, body: body, pullRequests: pullRequests), regression: true)
+    }
+
+    private static func hasCode(_ pullRequests: [PullRequestDetail]) -> Bool {
+        pullRequests.contains(where: { $0.patches.contains { !($0.patch ?? "").isEmpty } })
+    }
+
+    private static func context(ticketKey: String, title: String, body: String, pullRequests: [PullRequestDetail]) -> String {
         var user = "Ticket \(ticketKey): \(title)\n\n\(clip(body, maxTicketBody))\n"
         if pullRequests.isEmpty {
             user += "\nNo linked pull request.\n"
         }
+        var codeBudget = maxPatchTotal
         for pr in pullRequests {
             user += "\nPull request \(pr.repo)#\(pr.number): \(pr.title)\n\(clip(pr.body, maxPRBody))\n"
             let files = pr.files.prefix(maxFiles)
@@ -90,8 +148,40 @@ public struct DraftPrompt: Equatable, Sendable {
                 user += "Changed files:\n" + files.joined(separator: "\n") + "\n"
                 if pr.files.count > maxFiles { user += "…and \(pr.files.count - maxFiles) more\n" }
             }
+            user += codeSection(pr.patches, budget: &codeBudget)
         }
-        return DraftPrompt(system: system, user: user)
+        return user
+    }
+
+    /// Patch text shared across all pull requests by one budget; lockfiles, generated files and images are left out.
+    private static func codeSection(_ patches: [PullRequestFilePatch], budget: inout Int) -> String {
+        var out = ""
+        var hidden = 0
+        for file in patches {
+            guard let patch = file.patch, !patch.isEmpty, !isNoise(file.path) else { continue }
+            guard budget > 0 else { hidden += 1; continue }
+            let text = clip(patch, min(maxPatchPerFile, budget))
+            budget -= text.count
+            out += "--- \(file.path) (\(file.status))\n\(text)\n"
+        }
+        if hidden > 0 { out += "…and \(hidden) more changed files not shown\n" }
+        return out.isEmpty ? "" : "Code changes:\n" + out
+    }
+
+    private static let noiseNames: Set<String> = [
+        "package-lock.json", "yarn.lock", "pnpm-lock.yaml", "package.resolved", "podfile.lock", "cargo.lock",
+        "composer.lock", "gemfile.lock", "go.sum"
+    ]
+    private static let noiseSuffixes = [
+        ".lock", ".min.js", ".min.css", ".map", ".pbxproj", ".png", ".jpg", ".jpeg", ".gif", ".svg", ".ico", ".pdf"
+    ]
+    private static let noiseFolders: Set<String> = ["node_modules", "dist", "pods", ".build"]
+
+    static func isNoise(_ path: String) -> Bool {
+        let lower = path.lowercased()
+        let parts = lower.split(separator: "/").map(String.init)
+        guard let name = parts.last else { return true }
+        return noiseNames.contains(name) || noiseSuffixes.contains { name.hasSuffix($0) } || !noiseFolders.isDisjoint(with: parts.dropLast())
     }
 
     private static func clip(_ text: String, _ limit: Int) -> String {
@@ -113,19 +203,31 @@ public struct AICaseClient: Sendable {
         self.transport = transport
     }
 
-    public func draftCases(_ prompt: DraftPrompt) async throws -> [DraftCase] {
+    /// The model's raw reply text.
+    public func complete(_ prompt: DraftPrompt) async throws -> String {
         let request = try makeRequest(prompt)
         let (data, response) = try await transport.send(request)
         switch response.statusCode {
         case 200..<300: break
         case 401, 403: throw AIError.unauthorized(provider)
         case 429: throw AIError.rateLimited(provider)
+        case 404: throw AIError.modelNotFound(model, provider, Self.errorDetail(data))
         default: throw AIError.http(response.statusCode, provider)
         }
-        guard let text = replyText(data) else { throw AIError.unreadableReply }
-        let cases = try Self.parseCases(text)
+        guard let text = replyText(data) else { throw AIError.unreadableReply("") }
+        return text
+    }
+
+    public func draftCases(_ prompt: DraftPrompt) async throws -> [DraftCase] {
+        let cases = try Self.parseCases(try await complete(prompt), regression: prompt.regression)
         guard !cases.isEmpty else { throw AIError.noCases }
         return cases
+    }
+
+    private static func errorDetail(_ data: Data) -> String {
+        let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        let message = (root?["error"] as? [String: Any])?["message"] as? String
+        return String((message ?? String(decoding: data, as: UTF8.self)).prefix(300))
     }
 
     // MARK: Requests
@@ -162,6 +264,8 @@ public struct AICaseClient: Sendable {
                 "contents": [["role": "user", "parts": [["text": prompt.user]]]],
                 "generationConfig": ["responseMimeType": "application/json"]
             ]
+        case .copilot:
+            throw AIError.copilotFailed("Copilot drafts do not go through HTTP.")
         }
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
@@ -185,41 +289,80 @@ public struct AICaseClient: Sendable {
         case .gemini:
             let content = (root["candidates"] as? [[String: Any]])?.first?["content"] as? [String: Any]
             return (content?["parts"] as? [[String: Any]])?.compactMap { $0["text"] as? String }.joined(separator: "\n")
+        case .copilot:
+            return nil
         }
     }
 
     /// Accepts `{"cases":[…]}` or a bare array, inside optional prose or code fences.
-    static func parseCases(_ text: String) throws -> [DraftCase] {
-        guard let json = jsonSlice(of: text), let data = json.data(using: .utf8),
-              let value = try? JSONSerialization.jsonObject(with: data) else { throw AIError.unreadableReply }
-        let items: [[String: Any]]
-        if let array = value as? [[String: Any]] {
-            items = array
-        } else if let object = value as? [String: Any], let array = object["cases"] as? [[String: Any]] {
-            items = array
-        } else {
-            throw AIError.unreadableReply
+    static func parseCases(_ text: String, regression: Bool = false) throws -> [DraftCase] {
+        for candidate in jsonCandidates(in: text) {
+            guard let data = candidate.data(using: .utf8), let value = try? JSONSerialization.jsonObject(with: data) else { continue }
+            let items: [[String: Any]]
+            if let array = value as? [[String: Any]] {
+                items = array
+            } else if let object = value as? [String: Any], let array = object["cases"] as? [[String: Any]] {
+                items = array
+            } else {
+                continue
+            }
+            return items.compactMap { item in
+                let title = (item["title"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                guard !title.isEmpty else { return nil }
+                return DraftCase(
+                    title: title, steps: stepsText(item["steps"]), expected: plainText(item["expected"]),
+                    risk: regression ? plainText(item["risk"]) : "", isRegression: regression
+                )
+            }
         }
-        return items.compactMap { item in
-            let title = (item["title"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            guard !title.isEmpty else { return nil }
-            return DraftCase(title: title, steps: stepsText(item["steps"]), expected: (item["expected"] as? String) ?? "")
-        }
+        throw AIError.unreadableReply(AIError.preview(text))
+    }
+
+    private static func plainText(_ value: Any?) -> String {
+        if let text = value as? String { return text }
+        guard let list = value as? [Any] else { return "" }
+        return list.map { "\($0)" }.joined(separator: "\n")
     }
 
     private static func stepsText(_ value: Any?) -> String {
         if let text = value as? String { return text }
-        guard let list = value as? [String] else { return "" }
+        guard let list = value as? [Any] else { return "" }
         return list.enumerated().map { "\($0.offset + 1). \($0.element)" }.joined(separator: "\n")
     }
 
-    private static func jsonSlice(of text: String) -> String? {
-        let openers: [(Character, Character)] = [("{", "}"), ("[", "]")]
-        let candidates = openers.compactMap { open, close -> (String.Index, String.Index)? in
-            guard let start = text.firstIndex(of: open), let end = text.lastIndex(of: close), start < end else { return nil }
-            return (start, end)
+    /// Every balanced `{…}` or `[…]` in the text, in order, so prose or stray brackets around the JSON don't hide it.
+    static func jsonCandidates(in text: String) -> [String] {
+        let chars = Array(text)
+        var result: [String] = []
+        var i = 0
+        while i < chars.count {
+            guard chars[i] == "{" || chars[i] == "[", let end = balancedEnd(chars, from: i) else { i += 1; continue }
+            result.append(String(chars[i...end]))
+            i = end + 1
         }
-        guard let best = candidates.min(by: { $0.0 < $1.0 }) else { return nil }
-        return String(text[best.0...best.1])
+        return result
+    }
+
+    private static func balancedEnd(_ chars: [Character], from start: Int) -> Int? {
+        var stack: [Character] = []
+        var inString = false
+        var escaped = false
+        for i in start..<chars.count {
+            let c = chars[i]
+            if inString {
+                if escaped { escaped = false } else if c == "\\" { escaped = true } else if c == "\"" { inString = false }
+                continue
+            }
+            switch c {
+            case "\"": inString = true
+            case "{": stack.append("}")
+            case "[": stack.append("]")
+            case "}", "]":
+                guard stack.popLast() == c else { return nil }
+                if stack.isEmpty { return i }
+            default: break
+            }
+        }
+        return nil
     }
 }

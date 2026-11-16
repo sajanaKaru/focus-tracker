@@ -9,7 +9,7 @@ struct BoardView: View {
 
     var body: some View {
         let columns = store.boardColumns
-        let tickets = store.tickets(matching: filter)
+        let tickets = store.boardTickets(matching: filter)
         ScrollView(.horizontal) {
             HStack(alignment: .top, spacing: 14) {
                 ForEach(columns) { column in
@@ -86,7 +86,7 @@ struct BoardView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .cardStyle(padding: 12, selected: selectedTicketID == ticket.id)
         .hoverLift()
-        .onTapGesture { selectedTicketID = ticket.id }
+        .selectsTicket(ticket.id, selection: $selectedTicketID)
         .draggable(ticket.id.uuidString)
     }
 }

@@ -1,7 +1,7 @@
 import Foundation
 
 public enum AppSection: String, CaseIterable, Identifiable, Sendable {
-    case today, tickets, board, pullRequests, specialWork, reports, actionLog, qaQueue
+    case today, tickets, board, pullRequests, specialWork, reports, actionLog, qaQueue, backup
 
     public var id: String { rawValue }
 }
@@ -23,17 +23,17 @@ public enum UserRole: String, CaseIterable, Identifiable, Sendable {
         switch self {
         case .dev:
             RoleProfile(
-                sections: [.today, .tickets, .board, .pullRequests, .specialWork, .reports, .actionLog], landing: .today,
+                sections: [.today, .tickets, .board, .pullRequests, .specialWork, .reports, .actionLog, .backup], landing: .today,
                 statusOrder: [.inProgress, .inReview, .todo, .testing, .backlog, .done], captureKind: .bug
             )
         case .qa:
             RoleProfile(
-                sections: [.today, .qaQueue, .tickets, .board, .reports, .actionLog], landing: .today,
+                sections: [.today, .qaQueue, .tickets, .board, .reports, .actionLog, .backup], landing: .today,
                 statusOrder: [.testing, .inReview, .inProgress, .todo, .backlog, .done], captureKind: .bug
             )
         case .pm:
             RoleProfile(
-                sections: [.today, .qaQueue, .tickets, .board, .reports, .actionLog], landing: .today,
+                sections: [.today, .qaQueue, .tickets, .board, .reports, .actionLog, .backup], landing: .today,
                 statusOrder: [.inProgress, .inReview, .testing, .todo, .backlog, .done], captureKind: .request
             )
         }

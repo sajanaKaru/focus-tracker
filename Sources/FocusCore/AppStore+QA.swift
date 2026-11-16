@@ -82,22 +82,24 @@ extension AppStore {
     // MARK: - Test cases and results
 
     @discardableResult
-    public func addTestCase(ticketID: UUID, title: String, steps: String = "", expected: String = "") -> TestCase? {
+    public func addTestCase(ticketID: UUID, title: String, steps: String = "", expected: String = "", risk: String = "", isRegression: Bool = false) -> TestCase? {
         let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, let ticket = ticket(ticketID) else { return nil }
-        let testCase = TestCase(ticketID: ticketID, title: trimmed, steps: steps, expected: expected)
+        let testCase = TestCase(ticketID: ticketID, title: trimmed, steps: steps, expected: expected, risk: risk, isRegression: isRegression)
         testCases.append(testCase)
-        record(.testCase, ticket: ticket, field: "Test case added", new: trimmed)
+        record(.testCase, ticket: ticket, field: isRegression ? "Regression case added" : "Test case added", new: trimmed)
         save()
         return testCase
     }
 
-    public func updateTestCase(_ id: UUID, title: String, steps: String, expected: String) {
+    public func updateTestCase(_ id: UUID, title: String, steps: String, expected: String, risk: String? = nil, isRegression: Bool? = nil) {
         let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, let i = testCases.firstIndex(where: { $0.id == id }) else { return }
         testCases[i].title = trimmed
         testCases[i].steps = steps
         testCases[i].expected = expected
+        if let risk { testCases[i].risk = risk }
+        if let isRegression { testCases[i].isRegression = isRegression }
         save()
     }
 

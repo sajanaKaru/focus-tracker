@@ -76,7 +76,7 @@ struct PlanPage: View {
     }
 }
 
-private struct PlanCommentRow: View {
+struct PlanCommentRow: View {
     @Environment(AppStore.self) private var store
     let comment: PlanComment
     let canPost: Bool
@@ -145,20 +145,21 @@ private struct EditPlanCommentSheet: View {
     let comment: PlanComment
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Edit comment").font(.title3.weight(.semibold))
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Edit comment").font(.title.weight(.bold))
             PlanCommentEditor(initial: comment.text, submitTitle: "Save", onCancel: { dismiss() }) { text in
                 store.updatePlanComment(comment.id, text: text)
                 dismiss()
             }
+            .controlSize(.large)
         }
-        .padding(20)
-        .frame(width: 640)
+        .padding(28)
+        .frame(width: 760)
     }
 }
 
 /// Adds a new comment to the plan.
-private struct PlanCommentComposer: View {
+struct PlanCommentComposer: View {
     @Environment(AppStore.self) private var store
     let ticketID: UUID
 
@@ -232,9 +233,12 @@ private struct PlanCommentEditor: View {
                     .foregroundStyle(.tertiary)
                 Spacer()
                 if let onCancel {
-                    Button("Cancel", action: onCancel).keyboardShortcut(.cancelAction)
+                    Button(action: onCancel) { ShortcutLabel(title: "Cancel", keys: "⎋") }
+                        .buttonStyle(.secondary)
+                        .keyboardShortcut(.cancelAction)
                 }
                 Button(action: submit) { ShortcutLabel(title: submitTitle, keys: "⌘↩") }
+                    .buttonStyle(.primary)
                     .keyboardShortcut(.return, modifiers: .command)
                     .disabled(isEmpty || isUnchanged)
             }
@@ -279,7 +283,7 @@ private struct PlanCommentEditor: View {
 }
 
 /// Shows the combined comment as it will appear on GitHub before sending it.
-private struct PostPlanSheet: View {
+struct PostPlanSheet: View {
     @Environment(AppStore.self) private var store
     @Environment(\.dismiss) private var dismiss
     let ticketID: UUID
@@ -288,36 +292,37 @@ private struct PostPlanSheet: View {
     var body: some View {
         let pending = store.unpostedPlanComments(for: ticketID)
         let combined = pending.map(\.text).joined(separator: AppStore.planCommentSeparator)
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Post to GitHub").font(.title2.weight(.bold))
-            Text("This will be posted as a single comment on \(store.ticket(ticketID)?.displayKey ?? "the issue").")
-                .foregroundStyle(.secondary)
+        SheetScaffold(
+            title: "Post to GitHub",
+            subtitle: "This will be posted as a single comment on \(store.ticket(ticketID)?.displayKey ?? "the issue").",
+            width: 720, height: 560
+        ) {
             ScrollView {
                 MarkdownPreview(markdown: combined)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(10)
+                    .padding(12)
             }
             .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(Color.primary.opacity(0.15)))
-            HStack {
-                Spacer()
-                Button(role: .cancel) { dismiss() } label: { ShortcutLabel(title: "Cancel", keys: "⎋") }
-                    .keyboardShortcut(.cancelAction)
-                Button {
-                    Task {
-                        posting = true
-                        if await store.postPlan(ticketID) { dismiss() }
-                        posting = false
-                    }
-                } label: {
-                    if posting { ProgressView().controlSize(.small) } else { Text("Post comment") }
+            .padding(.horizontal, 28)
+            .padding(.vertical, 12)
+        } footer: {
+            Button(role: .cancel) { dismiss() } label: { ShortcutLabel(title: "Cancel", keys: "⎋") }
+                .buttonStyle(.secondary)
+                .keyboardShortcut(.cancelAction)
+            Button {
+                Task {
+                    posting = true
+                    if await store.postPlan(ticketID) { dismiss() }
+                    posting = false
                 }
-                .keyboardShortcut(.defaultAction)
-                .disabled(pending.isEmpty || posting)
+            } label: {
+                if posting { ProgressView().controlSize(.small) } else { Text("Post comment") }
             }
+            .buttonStyle(.primary)
+            .keyboardShortcut(.defaultAction)
+            .disabled(pending.isEmpty || posting)
         }
-        .padding()
-        .frame(width: 560, height: 420)
     }
 }
 

@@ -17,6 +17,17 @@ final class BoardColumnTests: XCTestCase {
         )
     }
 
+    func testBoardLeavesOutTicketsNoLongerAssignedOrClosedButListKeepsThem() {
+        let store = makeStore()
+        store.insertTicketForTest(statusTicket("Todo", number: 1))
+        var gone = statusTicket("Done", number: 2)
+        gone.github?.remoteClosed = true
+        store.insertTicketForTest(gone)
+
+        XCTAssertEqual(store.boardTickets(matching: TicketFilter()).map(\.title), ["T1"])
+        XCTAssertEqual(store.tickets(matching: TicketFilter()).count, 2)
+    }
+
     func testDefaultsToFiveStatuses() {
         let store = makeStore()
         XCTAssertEqual(store.boardColumns.map(\.name), TicketStatus.allCases.map(\.title))
