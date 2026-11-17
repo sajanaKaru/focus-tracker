@@ -90,7 +90,7 @@ public struct Capacity: Equatable, Sendable {
 
 /// Why a ticket is suggested; the raw value is its rank (lower is stronger).
 public enum PlanReason: Int, Sendable {
-    case dueNow, carriedOver, inProgress, dueSoon, sprintEnding, inSprint, priority, open
+    case dueNow, carriedOver, inProgress, dueSoon, sprintEnding, inSprint, nextSprint, priority, open
 
     public var title: String {
         switch self {
@@ -100,6 +100,7 @@ public enum PlanReason: Int, Sendable {
         case .dueSoon: "Due soon"
         case .sprintEnding: "Sprint ends soon"
         case .inSprint: "In sprint"
+        case .nextSprint: "Next sprint"
         case .priority: "Priority"
         case .open: "Open"
         }
@@ -164,7 +165,8 @@ public enum DayPlanner {
 
     public static func rank(
         tickets: [Ticket], carriedOver: Set<UUID>, now: Date, settings: PlanSettings, calendar: Calendar = .current,
-        trackedMinutes: [UUID: Int] = [:], plannedAheadMinutes: [UUID: Int] = [:]
+        trackedMinutes: [UUID: Int] = [:], plannedAheadMinutes: [UUID: Int] = [:],
+        activeSprintNames: Set<String> = [], nextSprintNames: Set<String> = []
     ) -> [PlanCandidate] {
         let today = calendar.startOfDay(for: now)
         let tomorrow = calendar.date(byAdding: .day, value: 1, to: today) ?? today
@@ -179,7 +181,12 @@ public enum DayPlanner {
             if ticket.sprints.contains(where: { $0.isCurrent(at: now) && ($0.end ?? .distantFuture) < soonLimit }) {
                 return .sprintEnding
             }
-            if ticket.sprints.contains(where: { $0.isCurrent(at: now) }) { return .inSprint }
+            if ticket.sprints.contains(where: { $0.isCurrent(at: now) || activeSprintNames.contains($0.value) }) {
+                return .inSprint
+            }
+            if ticket.sprints.contains(where: { nextSprintNames.contains($0.value) }) {
+                return .nextSprint
+            }
             return ticket.priority == .none ? .open : .priority
         }
 

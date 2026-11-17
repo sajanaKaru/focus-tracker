@@ -113,6 +113,26 @@ public struct CustomField: Codable, Hashable, Sendable {
     }
 }
 
+public struct SprintInfo: Identifiable, Hashable, Sendable {
+    public var id: String { "\(project)/\(name)" }
+    public var name: String
+    public var project: String
+    public var start: Date?
+    public var end: Date?
+
+    public init(name: String, project: String = "", start: Date? = nil, end: Date? = nil) {
+        self.name = name
+        self.project = project
+        self.start = start
+        self.end = end
+    }
+
+    public func isCurrent(at date: Date = Date()) -> Bool {
+        guard let start, let end else { return false }
+        return start <= date && date < end
+    }
+}
+
 public struct IssueType: Codable, Hashable, Sendable {
     public var name: String
     public var color: String?
