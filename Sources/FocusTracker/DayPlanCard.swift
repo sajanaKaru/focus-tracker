@@ -1,6 +1,24 @@
 import FocusCore
 import SwiftUI
 
+struct SprintBadge: View {
+    let sprintName: String
+    let isCurrent: Bool
+
+    var body: some View {
+        HStack(spacing: 3) {
+            Image(systemName: "arrow.triangle.2.circlepath")
+                .imageScale(.small)
+            Text(sprintName)
+        }
+        .font(.caption2.weight(.medium))
+        .padding(.horizontal, 6)
+        .padding(.vertical, 2)
+        .background(isCurrent ? Color.accentColor.opacity(0.15) : Color.secondary.opacity(0.12), in: Capsule())
+        .foregroundStyle(isCurrent ? Color.accentColor : Color.secondary)
+    }
+}
+
 struct DayPlanCard: View {
     @Environment(AppStore.self) private var store
     @Binding var selectedTicketID: UUID?
@@ -11,6 +29,8 @@ struct DayPlanCard: View {
     @State private var page = 0
     @State private var search = ""
     @State private var activeTypeFilter: Set<String>? = nil
+    @State private var activeSprintFilter: Set<String>? = nil
+    @State private var showingUnplanConfirmation = false
     private let pageSize = 10
 
     // Declared so the card re-renders when a plan setting changes in Settings.
@@ -30,7 +50,7 @@ struct DayPlanCard: View {
     }
 
     var body: some View {
-        let candidates = store.planCandidates(for: day, typeFilter: effectiveTypeFilter)
+        let candidates = store.planCandidates(for: day, typeFilter: effectiveTypeFilter, sprintFilter: effectiveSprintFilter)
         let plannedIDs = Set(store.plan(for: day)?.ticketIDs ?? [])
         let capacity = store.capacity(for: day, calendarBusy: calendarBusy)
         let planned = DayPlanner.plannedMinutes(candidates, ids: plannedIDs, capacityMinutes: capacity.capacityMinutes)
@@ -45,6 +65,13 @@ struct DayPlanCard: View {
             HStack {
                 SectionTitle(title: "Plan", count: candidates.filter { plannedIDs.contains($0.id) }.count)
                 Spacer()
+                if !plannedIDs.isEmpty {
+                    Button("Unplan All") {
+                        showingUnplanConfirmation = true
+                    }
+                    .buttonStyle(.secondary)
+                    .help("Remove all planned tickets from today's plan")
+                }
                 Button("Re-suggest") { store.suggestPlan(for: day, calendarBusy: calendarBusy) }
                     .buttonStyle(.secondary)
                     .disabled(candidates.isEmpty || !workingDay)
@@ -73,8 +100,16 @@ struct DayPlanCard: View {
             }
 
             if !fresh.isEmpty { newStrip(fresh) }
+            if !store.workspaceSprints.isEmpty {
+                sprintFilterChipsBar
+            }
             typeFilterChipsBar
-            if effectiveTypeFilter.isEmpty {
+            if effectiveSprintFilter != nil && effectiveSprintFilter!.isEmpty {
+                EmptyHint(
+                    text: "No sprints selected. Adjust your sprint filter to see candidates.",
+                    symbol: "line.3.horizontal.decrease.circle"
+                )
+            } else if effectiveTypeFilter.isEmpty {
                 EmptyHint(
                     text: "No ticket types selected. Adjust your filters or settings to see candidates.",
                     symbol: "line.3.horizontal.decrease.circle"
@@ -114,6 +149,18 @@ struct DayPlanCard: View {
                 }
                 if pageCount > 1 { pager(current: current, pageCount: pageCount) }
             }
+        }
+        .confirmationDialog(
+            "Unplan All Tickets?",
+            isPresented: $showingUnplanConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Unplan All", role: .destructive) {
+                store.unplanAll(for: day)
+            }
+            Button("Cancel", role: .cancel) { }
+        } message: {
+            Text("Are you sure you want to unplan all tickets for today? This will remove all planned tickets from today's plan.")
         }
         .task(id: "\(candidates.isEmpty)|\(Calendar.current.startOfDay(for: day))") { await loadCalendarAndPlan() }
     }
@@ -167,6 +214,9 @@ struct DayPlanCard: View {
                         .imageScale(.small)
                         .help(candidate.ticket.planCategory.rawValue)
                     Text(candidate.ticket.displayKey)
+                    ForEach(candidate.ticket.sprints, id: \.value) { sprint in
+                        SprintBadge(sprintName: sprint.value, isCurrent: sprint.isCurrent(at: store.now))
+                    }
                 }
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -230,7 +280,12 @@ struct DayPlanCard: View {
                     HStack(spacing: 10) {
                         VStack(alignment: .leading, spacing: 2) {
                             Text(candidate.ticket.title).lineLimit(1)
-                            Text(candidate.ticket.displayKey).font(.caption).foregroundStyle(.secondary)
+                            HStack(spacing: 5) {
+                                Text(candidate.ticket.displayKey).font(.caption).foregroundStyle(.secondary)
+                                ForEach(candidate.ticket.sprints, id: \.value) { sprint in
+                                    SprintBadge(sprintName: sprint.value, isCurrent: sprint.isCurrent(at: store.now))
+                                }
+                            }
                         }
                         Spacer()
                         Button("Add to plan") { store.togglePlanned(candidate.id, on: day) }.buttonStyle(.secondary)
@@ -342,6 +397,99 @@ struct DayPlanCard: View {
         .buttonStyle(.plain)
     }
 
+    private var allSprintFilterValues: Set<String> {
+        var values = Set(store.workspaceSprints.flatMap { [$0.name, $0.id] })
+        values.insert("No Sprint")
+        return values
+    }
+
+    private var effectiveSprintFilter: Set<String>? {
+        if let activeSprintFilter { return activeSprintFilter }
+        guard !store.workspaceSprints.isEmpty else { return nil }
+        return store.defaultPlanSprints
+    }
+
+    private var isAllSprintsSelected: Bool {
+        guard !store.workspaceSprints.isEmpty else { return true }
+        guard let effectiveSprintFilter else { return true }
+        return store.workspaceSprints.allSatisfy { sprint in
+            effectiveSprintFilter.contains(where: {
+                $0.caseInsensitiveCompare(sprint.name) == .orderedSame ||
+                $0.caseInsensitiveCompare(sprint.id) == .orderedSame
+            })
+        }
+    }
+
+    private var sprintFilterChipsBar: some View {
+        let sprints = store.workspaceSprints
+        let multipleProjects = Set(sprints.map(\.project)).count > 1
+        let next = store.nextSprint(at: store.now)
+        let hasNoSprintTickets = store.workspaceTickets.contains { $0.sprints.isEmpty }
+
+        return ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 6) {
+                filterChip(title: "All Sprints", symbol: nil, isSelected: isAllSprintsSelected) {
+                    activeSprintFilter = allSprintFilterValues
+                    page = 0
+                }
+                ForEach(sprints, id: \.id) { sprint in
+                    let isCurrent = sprint.isCurrent(at: store.now)
+                    let isNext = !isCurrent && next?.id == sprint.id
+                    let suffix = isCurrent ? " (Current)" : (isNext ? " (Next)" : "")
+                    let baseName = multipleProjects && !sprint.project.isEmpty ? "\(sprint.project): \(sprint.name)" : sprint.name
+                    let title = "\(baseName)\(suffix)"
+                    let isSelected = isAllSprintsSelected || (effectiveSprintFilter?.contains(where: {
+                        $0.caseInsensitiveCompare(sprint.name) == .orderedSame ||
+                        $0.caseInsensitiveCompare(sprint.id) == .orderedSame
+                    }) ?? false)
+
+                    filterChip(title: title, symbol: "arrow.triangle.2.circlepath", isSelected: isSelected) {
+                        toggleSprintFilter(sprint)
+                        page = 0
+                    }
+                }
+                if hasNoSprintTickets {
+                    let isSelected = isAllSprintsSelected || (effectiveSprintFilter?.contains("No Sprint") ?? false)
+                    filterChip(title: "No Sprint", symbol: "circle.slash", isSelected: isSelected) {
+                        toggleNoSprintFilter()
+                        page = 0
+                    }
+                }
+            }
+            .padding(.vertical, 2)
+        }
+    }
+
+    private func toggleSprintFilter(_ sprint: SprintInfo) {
+        if isAllSprintsSelected {
+            activeSprintFilter = [sprint.id, sprint.name]
+        } else if let effective = effectiveSprintFilter, effective.contains(where: {
+            $0.caseInsensitiveCompare(sprint.name) == .orderedSame || $0.caseInsensitiveCompare(sprint.id) == .orderedSame
+        }) {
+            let updated = effective.filter {
+                $0.caseInsensitiveCompare(sprint.name) != .orderedSame && $0.caseInsensitiveCompare(sprint.id) != .orderedSame
+            }
+            activeSprintFilter = updated
+        } else {
+            var updated = effectiveSprintFilter ?? []
+            updated.insert(sprint.id)
+            updated.insert(sprint.name)
+            activeSprintFilter = updated
+        }
+    }
+
+    private func toggleNoSprintFilter() {
+        if isAllSprintsSelected {
+            activeSprintFilter = ["No Sprint"]
+        } else if let effective = effectiveSprintFilter, effective.contains("No Sprint") {
+            activeSprintFilter = effective.filter { $0 != "No Sprint" }
+        } else {
+            var updated = effectiveSprintFilter ?? []
+            updated.insert("No Sprint")
+            activeSprintFilter = updated
+        }
+    }
+
     private func loadCalendarAndPlan() async {
         do {
             calendarBusy = try await CalendarService().busyIntervals(on: day)
@@ -363,6 +511,7 @@ private extension PlanReason {
         case .carriedOver: Theme.accentEnd
         case .inProgress: Theme.info
         case .inSprint: Theme.accent
+        case .nextSprint: Theme.teal
         case .priority: Theme.warning
         case .open: Theme.slate
         }

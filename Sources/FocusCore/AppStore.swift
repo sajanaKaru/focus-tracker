@@ -407,6 +407,100 @@ public final class AppStore {
         return starts.sorted { $0.value > $1.value }.map(\.key)
     }
 
+    /// Unique sprints present in workspace tickets.
+    public var workspaceSprints: [SprintInfo] {
+        var map: [String: SprintInfo] = [:]
+        for ticket in workspaceTickets {
+            for sprint in ticket.sprints {
+                let key = "\(sprint.project)/\(sprint.value)"
+                if var existing = map[key] {
+                    if existing.start == nil { existing.start = sprint.start }
+                    if existing.end == nil { existing.end = sprint.end }
+                    map[key] = existing
+                } else {
+                    map[key] = SprintInfo(name: sprint.value, project: sprint.project, start: sprint.start, end: sprint.end)
+                }
+            }
+        }
+        return map.values.sorted {
+            if let s1 = $0.start, let s2 = $1.start, s1 != s2 {
+                return s1 < s2
+            }
+            if $0.project != $1.project {
+                return $0.project.localizedCaseInsensitiveCompare($1.project) == .orderedAscending
+            }
+            return $0.name.localizedStandardCompare($1.name) == .orderedAscending
+        }
+    }
+
+    /// Returns the active current sprint.
+    public func currentSprint(at date: Date = Date()) -> SprintInfo? {
+        workspaceSprints.first { $0.isCurrent(at: date) }
+    }
+
+    /// Determines if a sprint has no remaining open work or has passed its end date.
+    public func isSprintFinished(_ sprint: SprintInfo, at date: Date = Date()) -> Bool {
+        if let end = sprint.end, date >= end { return true }
+        let sprintTickets = workspaceTickets.filter { ticket in
+            ticket.sprints.contains {
+                $0.value.caseInsensitiveCompare(sprint.name) == .orderedSame &&
+                (sprint.project.isEmpty || $0.project.isEmpty || $0.project.caseInsensitiveCompare(sprint.project) == .orderedSame)
+            }
+        }
+        guard !sprintTickets.isEmpty else { return false }
+        return sprintTickets.allSatisfy { $0.status == .done || $0.github?.remoteClosed == true }
+    }
+
+    /// Returns the next sprint chronologically following the current sprint.
+    public func nextSprint(after current: SprintInfo? = nil, forProject project: String? = nil, at date: Date = Date()) -> SprintInfo? {
+        let all = workspaceSprints.filter { project == nil || $0.project.caseInsensitiveCompare(project!) == .orderedSame }
+        let curr = current ?? all.first { $0.isCurrent(at: date) }
+        let referenceDate = curr?.end ?? date
+
+        let others = all.filter { curr == nil || ($0.id != curr!.id && $0.name != curr!.name) }
+
+        let future = others.filter {
+            if let start = $0.start {
+                return start >= referenceDate || start >= date
+            }
+            return false
+        }.sorted { ($0.start ?? .distantPast) < ($1.start ?? .distantPast) }
+
+        if let first = future.first { return first }
+
+        if let curr {
+            let afterByName = others.filter {
+                $0.name.localizedStandardCompare(curr.name) == .orderedDescending
+            }.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+            if let first = afterByName.first { return first }
+        }
+
+        return others.first
+    }
+
+    /// Default sprint names to select when planning (current active sprint, or next sprint if current is finished).
+    public var defaultPlanSprints: Set<String> {
+        let allSprints = workspaceSprints
+        guard !allSprints.isEmpty else { return [] }
+        var result = Set<String>()
+        let projects = Set(allSprints.map(\.project))
+        for proj in projects {
+            let projSprints = allSprints.filter { $0.project == proj }
+            let current = projSprints.first { $0.isCurrent(at: now) }
+            if let current, !isSprintFinished(current, at: now) {
+                result.insert(current.name)
+                result.insert(current.id)
+            } else if let next = nextSprint(after: current, forProject: proj, at: now) {
+                result.insert(next.name)
+                result.insert(next.id)
+            } else if let current {
+                result.insert(current.name)
+                result.insert(current.id)
+            }
+        }
+        return result
+    }
+
     public func isTracking(_ ticketID: UUID) -> Bool { activeEntry?.ticketID == ticketID }
 
     public func trackedTime(for ticketID: UUID) -> TimeInterval {
@@ -1284,6 +1378,7 @@ public final class AppStore {
         for day: Date,
         typeFilter: Set<String>? = nil,
         statusFilter: Set<String>? = nil,
+        sprintFilter: Set<String>? = nil,
         calendar: Calendar = .current
     ) -> [PlanCandidate] {
         let start = calendar.startOfDay(for: day)
@@ -1304,29 +1399,63 @@ public final class AppStore {
                 : planSettings.includedProjectStatuses
         )
 
-        let eligibleTickets = sprintScoped(workspaceTickets).filter { ticket in
+        let activeSprints = workspaceSprints.filter { $0.isCurrent(at: now) }
+        let unfinishedActiveSprints = activeSprints.filter { !isSprintFinished($0, at: now) }
+        let finishedActiveSprints = activeSprints.filter { isSprintFinished($0, at: now) }
+        var activeSprintNames = Set(unfinishedActiveSprints.map(\.name))
+        var nextSprintNames = Set<String>()
+
+        for finished in finishedActiveSprints {
+            if let next = nextSprint(after: finished, forProject: finished.project, at: now) {
+                activeSprintNames.insert(next.name)
+            }
+        }
+        for active in unfinishedActiveSprints {
+            if let next = nextSprint(after: active, forProject: active.project, at: now) {
+                nextSprintNames.insert(next.name)
+            }
+        }
+
+        let eligibleTickets = workspaceTickets.filter { ticket in
             let qualified = qualifiedStatusKey(for: ticket)
             let statusVal = ticket.projectStatusField?.value ?? ticket.status.title
-            return activeTypes.contains(ticket.planCategory.rawValue) &&
-                   effectiveStatuses.contains(where: {
-                       $0.caseInsensitiveCompare(qualified) == .orderedSame ||
-                       $0.caseInsensitiveCompare(statusVal) == .orderedSame
-                   })
+            guard activeTypes.contains(ticket.planCategory.rawValue) else { return false }
+            guard effectiveStatuses.contains(where: {
+                $0.caseInsensitiveCompare(qualified) == .orderedSame ||
+                $0.caseInsensitiveCompare(statusVal) == .orderedSame
+            }) else { return false }
+
+            if let sprintFilter {
+                if ticket.sprints.isEmpty {
+                    return sprintFilter.contains("No Sprint") || sprintFilter.contains("None")
+                }
+                return ticket.sprints.contains { sprint in
+                    sprintFilter.contains(where: {
+                        $0.caseInsensitiveCompare(sprint.value) == .orderedSame ||
+                        $0.caseInsensitiveCompare("\(sprint.project)/\(sprint.value)") == .orderedSame
+                    })
+                }
+            } else if !defaultPlanSprints.isEmpty {
+                return ticket.sprints.contains { sprint in
+                    defaultPlanSprints.contains(where: {
+                        $0.caseInsensitiveCompare(sprint.value) == .orderedSame ||
+                        $0.caseInsensitiveCompare("\(sprint.project)/\(sprint.value)") == .orderedSame
+                    })
+                }
+            } else {
+                return true
+            }
         }
         // A future day is ranked as of its own start so "due now" means due by then.
         let ranked = DayPlanner.rank(
             tickets: eligibleTickets, carriedOver: carried, now: max(now, start), settings: planSettings, calendar: calendar,
-            trackedMinutes: tracked, plannedAheadMinutes: plannedAheadMinutes(before: start, tracked: tracked, calendar: calendar)
+            trackedMinutes: tracked, plannedAheadMinutes: plannedAheadMinutes(before: start, tracked: tracked, calendar: calendar),
+            activeSprintNames: activeSprintNames, nextSprintNames: nextSprintNames
         )
         let planned = Set(plan(for: day, calendar: calendar)?.ticketIDs ?? [])
         guard planSettings.isWorkingDay(day, calendar: calendar) else { return ranked.filter { planned.contains($0.id) } }
         // Tickets the earlier planned days are expected to finish drop out, unless already planned on this day.
         return ranked.filter { $0.plannedAheadMinutes == 0 || $0.estimateMinutes > 0 || planned.contains($0.id) }
-    }
-
-    private func sprintScoped(_ tickets: [Ticket]) -> [Ticket] {
-        guard hasCurrentSprint else { return tickets }
-        return tickets.filter { $0.sprints.contains { $0.isCurrent(at: now) } }
     }
 
     /// Work that planned working days from today up to `start` are expected to use of each ticket.
@@ -1407,6 +1536,16 @@ public final class AppStore {
             dayPlans.append(DayPlan(day: calendar.startOfDay(for: day), ticketIDs: [ticketID]))
             record(.dayPlan, ticket: ticket(ticketID), field: "Added to day plan")
         }
+        save()
+    }
+
+    public func unplanAll(for day: Date, calendar: Calendar = .current) {
+        let start = calendar.startOfDay(for: day)
+        guard let index = dayPlans.firstIndex(where: { calendar.isDate($0.day, inSameDayAs: start) }) else { return }
+        let count = dayPlans[index].ticketIDs.count
+        guard count > 0 else { return }
+        dayPlans[index].ticketIDs.removeAll()
+        record(.dayPlan, field: "Unplanned all \(count) tickets")
         save()
     }
 
