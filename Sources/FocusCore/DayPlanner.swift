@@ -1,17 +1,55 @@
 import Foundation
 
-public struct PlanSettings: Equatable, Sendable {
+public struct PlanSettings: Codable, Equatable, Sendable {
     public var workingMinutes: Int
     public var focusFactor: Double
     public var defaultEstimateMinutes: Int
     /// 5 = Monday to Friday, 6 = Monday to Saturday, 7 = every day.
     public var workDays: Int
+    public var includedTicketTypes: Set<String>
 
-    public init(workingMinutes: Int = 480, focusFactor: Double = 0.75, defaultEstimateMinutes: Int = 60, workDays: Int = 7) {
+    public init(
+        workingMinutes: Int = 480,
+        focusFactor: Double = 0.75,
+        defaultEstimateMinutes: Int = 60,
+        workDays: Int = 7,
+        includedTicketTypes: Set<String> = Set(PlanTicketCategory.allCases.map(\.rawValue))
+    ) {
         self.workingMinutes = workingMinutes
         self.focusFactor = focusFactor
         self.defaultEstimateMinutes = defaultEstimateMinutes
         self.workDays = workDays
+        self.includedTicketTypes = includedTicketTypes
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case workingMinutes
+        case focusFactor
+        case defaultEstimateMinutes
+        case workDays
+        case includedTicketTypes
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        workingMinutes = try container.decodeIfPresent(Int.self, forKey: .workingMinutes) ?? 480
+        focusFactor = try container.decodeIfPresent(Double.self, forKey: .focusFactor) ?? 0.75
+        defaultEstimateMinutes = try container.decodeIfPresent(Int.self, forKey: .defaultEstimateMinutes) ?? 60
+        workDays = try container.decodeIfPresent(Int.self, forKey: .workDays) ?? 7
+        if let types = try container.decodeIfPresent(Set<String>.self, forKey: .includedTicketTypes), !types.isEmpty {
+            includedTicketTypes = types
+        } else {
+            includedTicketTypes = Set(PlanTicketCategory.allCases.map(\.rawValue))
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(workingMinutes, forKey: .workingMinutes)
+        try container.encode(focusFactor, forKey: .focusFactor)
+        try container.encode(defaultEstimateMinutes, forKey: .defaultEstimateMinutes)
+        try container.encode(workDays, forKey: .workDays)
+        try container.encode(includedTicketTypes, forKey: .includedTicketTypes)
     }
 
     public func isWorkingDay(_ date: Date, calendar: Calendar = .current) -> Bool {

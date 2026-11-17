@@ -338,6 +338,19 @@ struct SettingsView: View {
                 Stepper("Default estimate: \(Format.short(TimeInterval(defaultEstimateMinutes * 60)))", value: $defaultEstimateMinutes, in: 15...480, step: 15)
             }
 
+            Section("Plan Ticket Types") {
+                ForEach(PlanTicketCategory.allCases) { category in
+                    Toggle(isOn: Binding(
+                        get: { store.planIncludedTicketTypes.contains(category.rawValue) },
+                        set: { store.setIncludedTicketType(category, isIncluded: $0) }
+                    )) {
+                        Label(category.rawValue, systemImage: category.iconName)
+                    }
+                }
+                Text("Select which ticket types to include when generating daily plan suggestions.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+
             Section {
                 Text("Capacity = (working time − meetings) × focus factor. Tickets without an estimate count as the default estimate. Days off have no capacity and are skipped when planning tomorrow. Changes apply to the plan immediately.")
                     .font(.caption).foregroundStyle(.secondary)
