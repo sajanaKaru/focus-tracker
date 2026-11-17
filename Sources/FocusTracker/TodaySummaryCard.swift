@@ -9,6 +9,7 @@ struct TodaySummaryCard: View {
     @Binding var selectedTicketID: UUID?
     @State private var isExpanded: Bool = true
     @State private var copied: Bool = false
+    @State private var groupingMode: SummaryGroupingMode = .byType
 
     private var isToday: Bool { Calendar.current.isDate(day, inSameDayAs: store.now) }
     private var range: DateInterval { store.dayRange(for: day) }
@@ -23,11 +24,11 @@ struct TodaySummaryCard: View {
     private func copySummary() {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(
-            store.daySummaryText(for: day, includeDate: true, includeTomorrow: isToday),
+            store.daySummaryText(for: day, includeDate: true, includeTomorrow: isToday, mode: groupingMode),
             forType: .string
         )
         NSPasteboard.general.setString(
-            store.daySummaryHTML(for: day, includeDate: true, includeTomorrow: isToday),
+            store.daySummaryHTML(for: day, includeDate: true, includeTomorrow: isToday, mode: groupingMode),
             forType: .html
         )
         copied = true
@@ -38,7 +39,7 @@ struct TodaySummaryCard: View {
     }
 
     var body: some View {
-        let sections = store.daySummarySections(for: day)
+        let sections = store.daySummarySections(for: day, mode: groupingMode)
         let totalItems = sections.map(\.items.count).reduce(0, +)
         let totalTracked = store.trackedTime(in: range) + store.activityTime(in: range)
 
@@ -68,6 +69,38 @@ struct TodaySummaryCard: View {
                 }
 
                 Spacer()
+
+                // Grouping mode toggle menu
+                Menu {
+                    ForEach(SummaryGroupingMode.allCases, id: \.self) { mode in
+                        Button {
+                            groupingMode = mode
+                            store.summaryGroupingMode = mode
+                        } label: {
+                            HStack {
+                                Text(mode.title)
+                                if groupingMode == mode {
+                                    Image(systemName: "checkmark")
+                                }
+                            }
+                        }
+                    }
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: groupingMode == .byType ? "tag" : "chart.bar.doc.horizontal")
+                        Text(groupingMode.title)
+                        Image(systemName: "chevron.up.chevron.down")
+                            .font(.system(size: 8))
+                    }
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 5)
+                    .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
+                .help("Group summary by \(groupingMode.title)")
 
                 // Quick copy button with visual checkmark feedback
                 Button(action: copySummary) {
@@ -123,6 +156,9 @@ struct TodaySummaryCard: View {
             }
         }
         .cardStyle(padding: 16)
+        .onAppear {
+            groupingMode = store.summaryGroupingMode
+        }
     }
 
     @ViewBuilder

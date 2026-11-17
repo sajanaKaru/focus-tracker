@@ -79,6 +79,16 @@ struct SettingsView: View {
                 Text("The timer stops when you have been away this long, and the idle time is not counted. Set 0 to turn it off.")
                     .font(.caption).foregroundStyle(.secondary)
             }
+
+            Section("Summary") {
+                Picker("Group tickets by", selection: Binding(get: { store.summaryGroupingMode }, set: { store.summaryGroupingMode = $0 })) {
+                    ForEach(SummaryGroupingMode.allCases) { mode in
+                        Text(mode.title).tag(mode)
+                    }
+                }
+                Text("Controls default section grouping in the daily summary preview and copied markdown.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
         }
         .formStyle(.grouped)
     }
