@@ -11,7 +11,6 @@ struct DayPlanCard: View {
     @State private var page = 0
     @State private var search = ""
     @State private var activeTypeFilter: Set<String>? = nil
-    @State private var activeStatusFilter: Set<String>? = nil
     private let pageSize = 10
 
     // Declared so the card re-renders when a plan setting changes in Settings.
@@ -31,7 +30,7 @@ struct DayPlanCard: View {
     }
 
     var body: some View {
-        let candidates = store.planCandidates(for: day, typeFilter: effectiveTypeFilter, statusFilter: effectiveStatusFilter)
+        let candidates = store.planCandidates(for: day, typeFilter: effectiveTypeFilter)
         let plannedIDs = Set(store.plan(for: day)?.ticketIDs ?? [])
         let capacity = store.capacity(for: day, calendarBusy: calendarBusy)
         let planned = DayPlanner.plannedMinutes(candidates, ids: plannedIDs, capacityMinutes: capacity.capacityMinutes)
@@ -74,43 +73,24 @@ struct DayPlanCard: View {
             }
 
             if !fresh.isEmpty { newStrip(fresh) }
-            VStack(alignment: .leading, spacing: 6) {
-                typeFilterChipsBar
-                statusFilterChipsBar
-            }
+            typeFilterChipsBar
             if effectiveTypeFilter.isEmpty {
                 EmptyHint(
                     text: "No ticket types selected. Adjust your filters or settings to see candidates.",
                     symbol: "line.3.horizontal.decrease.circle"
                 )
-            } else if effectiveStatusFilter.isEmpty {
-                VStack(spacing: 8) {
-                    EmptyHint(
-                        text: "No project statuses selected. Adjust your filters or settings to see candidates.",
-                        symbol: "line.3.horizontal.decrease.circle"
-                    )
-                    Button("Reset Status Filters") {
-                        activeStatusFilter = nil
-                        page = 0
-                    }
-                    .buttonStyle(.secondary)
-                }
+            } else if store.isPlanProjectStatusesConfigured && store.planIncludedProjectStatuses.isEmpty {
+                EmptyHint(
+                    text: "All project statuses are disabled in Settings. Enable statuses in Settings → Planning to view candidates.",
+                    symbol: "line.3.horizontal.decrease.circle"
+                )
             } else if candidates.isEmpty {
-                VStack(spacing: 8) {
-                    EmptyHint(
-                        text: workingDay
-                            ? ((effectiveTypeFilter.count < PlanTicketCategory.allCases.count || effectiveStatusFilter.count < store.workspaceProjectStatuses.count) ? "No open tickets match the selected filters." : "No open tickets to plan. Sync GitHub or add a ticket.")
-                            : "Nothing to plan on a day off. Carried-over tickets show on \(nextWorkDayName).",
-                        symbol: (effectiveTypeFilter.count < PlanTicketCategory.allCases.count || effectiveStatusFilter.count < store.workspaceProjectStatuses.count) ? "line.3.horizontal.decrease" : "checklist"
-                    )
-                    if effectiveStatusFilter.count < store.workspaceProjectStatuses.count || activeStatusFilter != nil {
-                        Button("Reset Status Filters") {
-                            activeStatusFilter = nil
-                            page = 0
-                        }
-                        .buttonStyle(.secondary)
-                    }
-                }
+                EmptyHint(
+                    text: workingDay
+                        ? (effectiveTypeFilter.count < PlanTicketCategory.allCases.count ? "No open tickets match the selected filters." : "No open tickets to plan. Sync GitHub or check Settings → Planning.")
+                        : "Nothing to plan on a day off. Carried-over tickets show on \(nextWorkDayName).",
+                    symbol: (effectiveTypeFilter.count < PlanTicketCategory.allCases.count) ? "line.3.horizontal.decrease" : "checklist"
+                )
             } else {
                 searchField
                 let query = search.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -335,94 +315,6 @@ struct DayPlanCard: View {
             updated.insert(category.rawValue)
             activeTypeFilter = updated
         }
-    }
-
-    private var defaultProjectStatuses: Set<String> {
-        let statuses = store.workspaceProjectStatuses
-        return (!store.isPlanProjectStatusesConfigured && store.planIncludedProjectStatuses.isEmpty)
-            ? Set(statuses.filter { $0.status != .done }.map(\.id))
-            : store.planIncludedProjectStatuses
-    }
-
-    private var effectiveStatusFilter: Set<String> {
-        activeStatusFilter ?? defaultProjectStatuses
-    }
-
-    private var isAllStatusesSelected: Bool {
-        let statuses = store.workspaceProjectStatuses
-        return statuses.allSatisfy { opt in
-            effectiveStatusFilter.contains(where: {
-                $0.caseInsensitiveCompare(opt.id) == .orderedSame ||
-                $0.caseInsensitiveCompare(opt.name) == .orderedSame
-            })
-        }
-    }
-
-    private var statusFilterChipsBar: some View {
-        let multipleProjects = store.workspaceProjectStatusesByProject.count > 1
-        return ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 6) {
-                filterChip(title: "All Statuses", symbol: nil, isSelected: isAllStatusesSelected) {
-                    activeStatusFilter = Set(store.workspaceProjectStatuses.map(\.id))
-                    page = 0
-                }
-                ForEach(store.workspaceProjectStatuses) { opt in
-                    let isSelected = effectiveStatusFilter.contains(where: {
-                        $0.caseInsensitiveCompare(opt.id) == .orderedSame ||
-                        $0.caseInsensitiveCompare(opt.name) == .orderedSame
-                    })
-                    let title = multipleProjects ? "\(opt.project): \(opt.name)" : opt.name
-                    statusChip(opt: opt, title: title, isSelected: isSelected) {
-                        toggleStatusFilter(opt.id)
-                        page = 0
-                    }
-                }
-            }
-            .padding(.vertical, 2)
-        }
-    }
-
-    private func toggleStatusFilter(_ statusKey: String) {
-        if isAllStatusesSelected {
-            activeStatusFilter = [statusKey]
-        } else if effectiveStatusFilter.contains(where: { $0.caseInsensitiveCompare(statusKey) == .orderedSame }) {
-            let updated = effectiveStatusFilter.filter { $0.caseInsensitiveCompare(statusKey) != .orderedSame }
-            activeStatusFilter = updated
-        } else {
-            var updated = effectiveStatusFilter
-            updated.insert(statusKey)
-            activeStatusFilter = updated
-        }
-    }
-
-    private func statusChip(opt: ProjectStatusOption, title: String, isSelected: Bool, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            HStack(spacing: 5) {
-                if let color = opt.color, let rgb = LabelChip.rgb(color) {
-                    Circle()
-                        .fill(Color(red: rgb.r, green: rgb.g, blue: rgb.b))
-                        .frame(width: 6, height: 6)
-                } else {
-                    Circle()
-                        .fill(isSelected ? Color.accentColor : Color.secondary)
-                        .frame(width: 6, height: 6)
-                }
-                Text(title)
-            }
-            .font(.caption.weight(isSelected ? .semibold : .regular))
-            .padding(.horizontal, 9)
-            .padding(.vertical, 4)
-            .background(
-                isSelected ? Color.accentColor.opacity(0.18) : Color.primary.opacity(0.06),
-                in: Capsule()
-            )
-            .overlay(
-                Capsule()
-                    .strokeBorder(isSelected ? Color.accentColor.opacity(0.4) : Color.clear, lineWidth: 1)
-            )
-            .foregroundStyle(isSelected ? Color.accentColor : Color.primary)
-        }
-        .buttonStyle(.plain)
     }
 
     private func filterChip(title: String, symbol: String?, isSelected: Bool, action: @escaping () -> Void) -> some View {

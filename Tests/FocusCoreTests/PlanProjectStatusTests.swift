@@ -17,7 +17,8 @@ final class PlanProjectStatusTests: XCTestCase {
         status: TicketStatus = .todo,
         projectStatus: String? = nil,
         project: String = "Proj1",
-        color: String? = nil
+        color: String? = nil,
+        estimateMinutes: Int? = nil
     ) -> Ticket {
         let ticket = store.addTicket(title: title)
         store.update(ticket.id) {
@@ -25,6 +26,9 @@ final class PlanProjectStatusTests: XCTestCase {
             if let projectStatus {
                 let field = CustomField(name: "Status", value: projectStatus, kind: .select, project: project, color: color)
                 $0.fields = [field]
+            }
+            if let estimateMinutes {
+                $0.estimateMinutes = estimateMinutes
             }
         }
         return store.ticket(ticket.id)!
@@ -372,5 +376,161 @@ final class PlanProjectStatusTests: XCTestCase {
 
         candidates = store.planCandidates(for: Date())
         XCTAssertFalse(candidates.contains { $0.id == ticket.id })
+    }
+
+    // MARK: - Auto-Plan & Streamlined Candidate Boundary Tests (Realistic Mock Data)
+
+    func testCandidateGenerationWithoutStatusFilterAdheresToSettings() {
+        let (store, _, _) = makeStore()
+        var options = RemoteOptions()
+        options.projectStatus["Web App"] = [
+            FieldOption(name: "In Dev 🏃", color: "blue"),
+            FieldOption(name: "Done", color: "green")
+        ]
+        options.projectStatus["Mobile App"] = [
+            FieldOption(name: "🏃 In Dev", color: "purple"),
+            FieldOption(name: "Done", color: "green")
+        ]
+        options.projectStatus["API Service"] = [
+            FieldOption(name: "In Dev", color: "orange"),
+            FieldOption(name: "Done", color: "green")
+        ]
+        store.storeOptions(options)
+
+        let webTicket = addTicket(store, "Web Task 1", status: .inProgress, projectStatus: "In Dev 🏃", project: "Web App")
+        let mobileTicket = addTicket(store, "Mobile Task 1", status: .inProgress, projectStatus: "🏃 In Dev", project: "Mobile App")
+        let apiTicket = addTicket(store, "API Task 1", status: .inProgress, projectStatus: "In Dev", project: "API Service")
+
+        // Unconfigured defaults: all 3 tickets appear as candidates
+        var candidates = store.planCandidates(for: Date())
+        XCTAssertTrue(candidates.contains { $0.id == webTicket.id })
+        XCTAssertTrue(candidates.contains { $0.id == mobileTicket.id })
+        XCTAssertTrue(candidates.contains { $0.id == apiTicket.id })
+
+        // Scoped toggling: disable "In Dev 🏃" specifically in Web App
+        store.setIncludedProjectStatus(project: "Web App", name: "In Dev 🏃", isIncluded: false)
+
+        // Assert isolation: Web App ticket excluded, Mobile & API tickets remain included
+        candidates = store.planCandidates(for: Date())
+        XCTAssertFalse(candidates.contains { $0.id == webTicket.id })
+        XCTAssertTrue(candidates.contains { $0.id == mobileTicket.id })
+        XCTAssertTrue(candidates.contains { $0.id == apiTicket.id })
+    }
+
+    func testAutoPlanSelectsOnlyFromFilteredStatuses() {
+        let (store, _, _) = makeStore()
+        var options = RemoteOptions()
+        options.projectStatus["Delenta - Web Development"] = [
+            FieldOption(name: "In Dev", color: "blue"),
+            FieldOption(name: "Testing 🧪", color: "orange"),
+            FieldOption(name: "Done", color: "green")
+        ]
+        options.projectStatus["Delenta - Defect tracker"] = [
+            FieldOption(name: "In Dev", color: "purple"),
+            FieldOption(name: "Testing 🧪", color: "orange"),
+            FieldOption(name: "Done", color: "green")
+        ]
+        store.storeOptions(options)
+
+        let t1 = addTicket(store, "Web In Dev", status: .inProgress, projectStatus: "In Dev", project: "Delenta - Web Development", estimateMinutes: 60)
+        let t2 = addTicket(store, "Web In Testing", status: .testing, projectStatus: "Testing 🧪", project: "Delenta - Web Development", estimateMinutes: 60)
+        let t3 = addTicket(store, "Defect In Dev", status: .inProgress, projectStatus: "In Dev", project: "Delenta - Defect tracker", estimateMinutes: 60)
+        let t4 = addTicket(store, "Defect In Testing", status: .testing, projectStatus: "Testing 🧪", project: "Delenta - Defect tracker", estimateMinutes: 60)
+
+        // Disable "Testing 🧪" for both projects in Settings
+        store.setIncludedProjectStatus(project: "Delenta - Web Development", name: "Testing 🧪", isIncluded: false)
+        store.setIncludedProjectStatus(project: "Delenta - Defect tracker", name: "Testing 🧪", isIncluded: false)
+
+        let today = Date()
+        guard let plan = store.suggestPlan(for: today, calendarBusy: []) else {
+            XCTFail("Expected suggestPlan to create a DayPlan")
+            return
+        }
+
+        // Must pick In Dev tickets, must never pick Testing tickets
+        XCTAssertTrue(plan.ticketIDs.contains(t1.id), "t1 (In Dev) must be auto-planned")
+        XCTAssertTrue(plan.ticketIDs.contains(t3.id), "t3 (In Dev) must be auto-planned")
+        XCTAssertFalse(plan.ticketIDs.contains(t2.id), "t2 (Testing 🧪) must NEVER be auto-planned")
+        XCTAssertFalse(plan.ticketIDs.contains(t4.id), "t4 (Testing 🧪) must NEVER be auto-planned")
+    }
+
+    func testAutoPlanCarriedOverTicketExcludedWhenStatusDisabled() {
+        let (store, _, _) = makeStore()
+        let calendar = Calendar.current
+        let today = calendar.startOfDay(for: Date())
+        let yesterday = calendar.date(byAdding: .day, value: -1, to: today)!
+
+        var options = RemoteOptions()
+        options.projectStatus["Project Alpha"] = [
+            FieldOption(name: "In Dev", color: "blue"),
+            FieldOption(name: "Testing 🧪", color: "orange")
+        ]
+        store.storeOptions(options)
+
+        // Create a ticket that was planned yesterday
+        let carriedTicket = addTicket(store, "Carried Over Work", status: .testing, projectStatus: "Testing 🧪", project: "Project Alpha", estimateMinutes: 60)
+        store.togglePlanned(carriedTicket.id, on: yesterday)
+
+        // But today "Testing 🧪" is disabled in settings
+        store.setIncludedProjectStatus(project: "Project Alpha", name: "Testing 🧪", isIncluded: false)
+
+        // Verify it is not in candidates
+        let candidates = store.planCandidates(for: today)
+        XCTAssertFalse(candidates.contains { $0.id == carriedTicket.id }, "Carried over ticket in excluded status must not be a candidate")
+
+        // Auto-plan for today
+        let plan = store.suggestPlan(for: today, calendarBusy: [])
+        XCTAssertNil(plan, "suggestPlan should produce no plan when all eligible candidates are excluded by settings")
+    }
+
+    func testAutoPlanMultiProjectCollisionIsolation() {
+        let (store, _, _) = makeStore()
+        var options = RemoteOptions()
+        options.projectStatus["Project Web"] = [
+            FieldOption(name: "Code Review 🤞", color: "blue"),
+            FieldOption(name: "Done", color: "green")
+        ]
+        options.projectStatus["Project Mobile"] = [
+            FieldOption(name: "Code Review 🤞", color: "purple"),
+            FieldOption(name: "Done", color: "green")
+        ]
+        store.storeOptions(options)
+
+        let webTicket = addTicket(store, "Web PR", status: .inProgress, projectStatus: "Code Review 🤞", project: "Project Web", estimateMinutes: 120)
+        let mobileTicket = addTicket(store, "Mobile PR", status: .inProgress, projectStatus: "Code Review 🤞", project: "Project Mobile", estimateMinutes: 120)
+
+        // In Settings, clear statuses for Project Web, leave Project Mobile active
+        store.clearAllStatuses(for: "Project Web")
+
+        let today = Date()
+        guard let plan = store.suggestPlan(for: today, calendarBusy: []) else {
+            XCTFail("Expected suggestPlan to create a DayPlan for active Project Mobile")
+            return
+        }
+
+        XCTAssertFalse(plan.ticketIDs.contains(webTicket.id), "Web PR must be excluded from auto-plan after clearing Project Web")
+        XCTAssertTrue(plan.ticketIDs.contains(mobileTicket.id), "Mobile PR must be included in auto-plan as Project Mobile remains active")
+    }
+
+    func testAutoPlanProducesNilWhenAllStatusesCleared() {
+        let (store, _, _) = makeStore()
+        var options = RemoteOptions()
+        options.projectStatus["Project Alpha"] = [
+            FieldOption(name: "In Dev", color: "blue")
+        ]
+        options.projectStatus["Project Beta"] = [
+            FieldOption(name: "In Dev", color: "purple")
+        ]
+        store.storeOptions(options)
+
+        _ = addTicket(store, "Task 1", status: .inProgress, projectStatus: "In Dev", project: "Project Alpha")
+        _ = addTicket(store, "Task 2", status: .inProgress, projectStatus: "In Dev", project: "Project Beta")
+
+        store.clearAllStatuses(for: "Project Alpha")
+        store.clearAllStatuses(for: "Project Beta")
+
+        let today = Date()
+        XCTAssertTrue(store.planCandidates(for: today).isEmpty, "Candidates must be empty when all statuses cleared")
+        XCTAssertNil(store.suggestPlan(for: today, calendarBusy: []), "suggestPlan must return nil when candidates are empty")
     }
 }
