@@ -75,8 +75,9 @@ public final class AppStore {
     public private(set) var hiddenWorkspaces: Set<String> = []
     /// Ticket types enabled for daily planning.
     public private(set) var planIncludedTicketTypes: Set<String> = []
-    /// Project statuses enabled for daily planning. Empty defaults to all non-done statuses.
+    /// Project statuses enabled for daily planning. Empty defaults to all non-done statuses when unconfigured.
     public private(set) var planIncludedProjectStatuses: Set<String> = []
+    public private(set) var isPlanProjectStatusesConfigured: Bool = false
     public var selectedWorkspace: Workspace = .all {
         didSet { defaults.set(selectedWorkspace.storageValue, forKey: PrefKey.workspace) }
     }
@@ -152,8 +153,10 @@ public final class AppStore {
         }
         if let savedStatuses = defaults.stringArray(forKey: PrefKey.planIncludedProjectStatuses) {
             planIncludedProjectStatuses = Set(savedStatuses)
+            isPlanProjectStatusesConfigured = true
         } else {
             planIncludedProjectStatuses = []
+            isPlanProjectStatusesConfigured = false
         }
         selectedWorkspace = Workspace(storageValue: defaults.string(forKey: PrefKey.workspace))
         role = defaults.string(forKey: PrefKey.role).flatMap(UserRole.init(rawValue:)) ?? .dev
@@ -221,29 +224,110 @@ public final class AppStore {
 
     public func setIncludedProjectStatuses(_ statuses: Set<String>) {
         planIncludedProjectStatuses = statuses
+        isPlanProjectStatusesConfigured = true
         defaults.set(Array(statuses).sorted(), forKey: PrefKey.planIncludedProjectStatuses)
     }
 
-    public func setIncludedProjectStatus(_ statusName: String, isIncluded: Bool) {
-        var updated = planIncludedProjectStatuses.isEmpty
-            ? Set(workspaceProjectStatuses.filter { $0.status != .done }.map(\.name))
+    public func isProjectStatusIncluded(project: String, name: String) -> Bool {
+        let key = ProjectStatusOption.qualifiedKey(project: project, name: name)
+        if !isPlanProjectStatusesConfigured && planIncludedProjectStatuses.isEmpty {
+            let allOptions = workspaceProjectStatusesByProject.flatMap(\.statuses)
+            if let opt = allOptions.first(where: {
+                $0.project.caseInsensitiveCompare(project) == .orderedSame &&
+                $0.name.caseInsensitiveCompare(name) == .orderedSame
+            }) {
+                return opt.status != .done
+            }
+            return true
+        }
+        return planIncludedProjectStatuses.contains(where: {
+            $0.caseInsensitiveCompare(key) == .orderedSame ||
+            $0.caseInsensitiveCompare(name) == .orderedSame
+        })
+    }
+
+    public func isProjectStatusIncluded(project: String, status: String) -> Bool {
+        isProjectStatusIncluded(project: project, name: status)
+    }
+
+    public func setIncludedProjectStatus(project: String, name: String, isIncluded: Bool) {
+        let key = ProjectStatusOption.qualifiedKey(project: project, name: name)
+        let allOptions = workspaceProjectStatusesByProject.flatMap(\.statuses)
+        var updated = (!isPlanProjectStatusesConfigured && planIncludedProjectStatuses.isEmpty)
+            ? Set(allOptions.filter { $0.status != .done }.map(\.id))
             : planIncludedProjectStatuses
         if isIncluded {
-            if !updated.contains(where: { $0.caseInsensitiveCompare(statusName) == .orderedSame }) {
-                updated.insert(statusName)
+            if !updated.contains(where: { $0.caseInsensitiveCompare(key) == .orderedSame }) {
+                updated.insert(key)
             }
         } else {
-            updated = updated.filter { $0.caseInsensitiveCompare(statusName) != .orderedSame }
+            updated = updated.filter {
+                $0.caseInsensitiveCompare(key) != .orderedSame &&
+                $0.caseInsensitiveCompare(name) != .orderedSame
+            }
+        }
+        setIncludedProjectStatuses(updated)
+    }
+
+    public func setIncludedProjectStatus(project: String, status: String, isIncluded: Bool) {
+        setIncludedProjectStatus(project: project, name: status, isIncluded: isIncluded)
+    }
+
+    public func setIncludedProjectStatus(_ statusName: String, isIncluded: Bool) {
+        let allOptions = workspaceProjectStatusesByProject.flatMap(\.statuses)
+        let matching = allOptions.filter { $0.name.caseInsensitiveCompare(statusName) == .orderedSame }
+        if matching.isEmpty {
+            setIncludedProjectStatus(project: "General", name: statusName, isIncluded: isIncluded)
+        } else {
+            for opt in matching {
+                setIncludedProjectStatus(project: opt.project, name: opt.name, isIncluded: isIncluded)
+            }
+        }
+    }
+
+    public func setAllActiveStatuses(for project: String) {
+        let allOptions = workspaceProjectStatusesByProject.flatMap(\.statuses)
+        var updated = (!isPlanProjectStatusesConfigured && planIncludedProjectStatuses.isEmpty)
+            ? Set(allOptions.filter { $0.status != .done }.map(\.id))
+            : planIncludedProjectStatuses
+
+        let projectStatuses = workspaceProjectStatusesByProject.first(where: { $0.project.caseInsensitiveCompare(project) == .orderedSame })?.statuses ?? []
+        for opt in projectStatuses {
+            if opt.status != .done {
+                updated.insert(opt.id)
+            } else {
+                updated.remove(opt.id)
+            }
+        }
+        setIncludedProjectStatuses(updated)
+    }
+
+    public func clearAllStatuses(for project: String) {
+        let allOptions = workspaceProjectStatusesByProject.flatMap(\.statuses)
+        var updated = (!isPlanProjectStatusesConfigured && planIncludedProjectStatuses.isEmpty)
+            ? Set(allOptions.filter { $0.status != .done }.map(\.id))
+            : planIncludedProjectStatuses
+
+        let projectStatuses = workspaceProjectStatusesByProject.first(where: { $0.project.caseInsensitiveCompare(project) == .orderedSame })?.statuses ?? []
+        for opt in projectStatuses {
+            updated.remove(opt.id)
+            updated = updated.filter {
+                $0.caseInsensitiveCompare(opt.id) != .orderedSame &&
+                $0.caseInsensitiveCompare(opt.name) != .orderedSame
+            }
         }
         setIncludedProjectStatuses(updated)
     }
 
     public func resetIncludedProjectStatusesToDefaults() {
-        setIncludedProjectStatuses([])
+        planIncludedProjectStatuses = []
+        isPlanProjectStatusesConfigured = false
+        defaults.removeObject(forKey: PrefKey.planIncludedProjectStatuses)
     }
 
     public func selectAllActiveProjectStatuses() {
-        setIncludedProjectStatuses(Set(workspaceProjectStatuses.filter { $0.status != .done }.map(\.name)))
+        let allOptions = workspaceProjectStatusesByProject.flatMap(\.statuses)
+        setIncludedProjectStatuses(Set(allOptions.filter { $0.status != .done }.map(\.id)))
     }
 
     /// All, then the visible workspaces; only All until the login is known.
@@ -1212,16 +1296,22 @@ public final class AppStore {
             .mapValues { Int(($0.reduce(0) { $0 + $1.duration(at: now) } / 60).rounded()) }
         let activeTypes = typeFilter ?? planSettings.includedTicketTypes
 
-        let available = workspaceProjectStatuses
-        let defaultStatuses = Set(available.filter { $0.status != .done }.map(\.name))
+        let allOptions = workspaceProjectStatusesByProject.flatMap(\.statuses)
+        let defaultStatuses = Set(allOptions.filter { $0.status != .done }.map(\.id))
         let effectiveStatuses: Set<String> = statusFilter ?? (
-            planSettings.includedProjectStatuses.isEmpty ? defaultStatuses : planSettings.includedProjectStatuses
+            (!isPlanProjectStatusesConfigured && planSettings.includedProjectStatuses.isEmpty)
+                ? defaultStatuses
+                : planSettings.includedProjectStatuses
         )
 
         let eligibleTickets = sprintScoped(workspaceTickets).filter { ticket in
-            let name = statusName(for: ticket)
+            let qualified = qualifiedStatusKey(for: ticket)
+            let statusVal = ticket.projectStatusField?.value ?? ticket.status.title
             return activeTypes.contains(ticket.planCategory.rawValue) &&
-                   effectiveStatuses.contains(where: { $0.caseInsensitiveCompare(name) == .orderedSame })
+                   effectiveStatuses.contains(where: {
+                       $0.caseInsensitiveCompare(qualified) == .orderedSame ||
+                       $0.caseInsensitiveCompare(statusVal) == .orderedSame
+                   })
         }
         // A future day is ranked as of its own start so "due now" means due by then.
         let ranked = DayPlanner.rank(
