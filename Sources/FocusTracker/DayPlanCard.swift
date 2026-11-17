@@ -10,6 +10,7 @@ struct DayPlanCard: View {
     @State private var calendarNote: String?
     @State private var page = 0
     @State private var search = ""
+    @State private var activeTypeFilter: Set<String>? = nil
     private let pageSize = 10
 
     // Declared so the card re-renders when a plan setting changes in Settings.
@@ -29,7 +30,7 @@ struct DayPlanCard: View {
     }
 
     var body: some View {
-        let candidates = store.planCandidates(for: day)
+        let candidates = store.planCandidates(for: day, typeFilter: effectiveTypeFilter)
         let plannedIDs = Set(store.plan(for: day)?.ticketIDs ?? [])
         let capacity = store.capacity(for: day, calendarBusy: calendarBusy)
         let planned = DayPlanner.plannedMinutes(candidates, ids: plannedIDs, capacityMinutes: capacity.capacityMinutes)
@@ -72,12 +73,18 @@ struct DayPlanCard: View {
             }
 
             if !fresh.isEmpty { newStrip(fresh) }
-            if candidates.isEmpty {
+            filterChipsBar
+            if effectiveTypeFilter.isEmpty {
+                EmptyHint(
+                    text: "No ticket types selected. Adjust your filters or settings to see candidates.",
+                    symbol: "line.3.horizontal.decrease.circle"
+                )
+            } else if candidates.isEmpty {
                 EmptyHint(
                     text: workingDay
-                        ? "No open tickets to plan. Sync GitHub or add a ticket."
+                        ? (effectiveTypeFilter.count < PlanTicketCategory.allCases.count ? "No open tickets match the selected ticket types." : "No open tickets to plan. Sync GitHub or add a ticket.")
                         : "Nothing to plan on a day off. Carried-over tickets show on \(nextWorkDayName).",
-                    symbol: "checklist"
+                    symbol: effectiveTypeFilter.count < PlanTicketCategory.allCases.count ? "line.3.horizontal.decrease" : "checklist"
                 )
             } else {
                 searchField
@@ -150,7 +157,14 @@ struct DayPlanCard: View {
                 .toggleStyle(RoundCheckStyle())
             VStack(alignment: .leading, spacing: 2) {
                 Text(candidate.ticket.title).lineLimit(1)
-                Text(candidate.ticket.displayKey).font(.caption).foregroundStyle(.secondary)
+                HStack(spacing: 5) {
+                    Image(systemName: candidate.ticket.planCategory.iconName)
+                        .imageScale(.small)
+                        .help(candidate.ticket.planCategory.rawValue)
+                    Text(candidate.ticket.displayKey)
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
             }
             Spacer()
             if canDefer {
@@ -251,6 +265,75 @@ struct DayPlanCard: View {
         .animation(reduceMotion ? nil : .spring(duration: 0.35), value: planned)
         .accessibilityElement()
         .accessibilityLabel("Planned \(text(planned)) of \(text(capacity)) capacity")
+    }
+
+    private var effectiveTypeFilter: Set<String> {
+        activeTypeFilter ?? store.planSettings.includedTicketTypes
+    }
+
+    private var isAllSelected: Bool {
+        PlanTicketCategory.allCases.allSatisfy { effectiveTypeFilter.contains($0.rawValue) }
+    }
+
+    private var filterChipsBar: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 6) {
+                filterChip(title: "All", symbol: nil, isSelected: isAllSelected) {
+                    activeTypeFilter = Set(PlanTicketCategory.allCases.map(\.rawValue))
+                    page = 0
+                }
+                ForEach(PlanTicketCategory.allCases) { category in
+                    filterChip(
+                        title: category.rawValue,
+                        symbol: category.iconName,
+                        isSelected: effectiveTypeFilter.contains(category.rawValue)
+                    ) {
+                        toggleCategoryFilter(category)
+                        page = 0
+                    }
+                }
+            }
+            .padding(.vertical, 2)
+        }
+    }
+
+    private func toggleCategoryFilter(_ category: PlanTicketCategory) {
+        if isAllSelected {
+            activeTypeFilter = [category.rawValue]
+        } else if effectiveTypeFilter.contains(category.rawValue) {
+            var updated = effectiveTypeFilter
+            updated.remove(category.rawValue)
+            activeTypeFilter = updated
+        } else {
+            var updated = effectiveTypeFilter
+            updated.insert(category.rawValue)
+            activeTypeFilter = updated
+        }
+    }
+
+    private func filterChip(title: String, symbol: String?, isSelected: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 5) {
+                if let symbol {
+                    Image(systemName: symbol)
+                        .imageScale(.small)
+                }
+                Text(title)
+            }
+            .font(.caption.weight(isSelected ? .semibold : .regular))
+            .padding(.horizontal, 9)
+            .padding(.vertical, 4)
+            .background(
+                isSelected ? Color.accentColor.opacity(0.18) : Color.primary.opacity(0.06),
+                in: Capsule()
+            )
+            .overlay(
+                Capsule()
+                    .strokeBorder(isSelected ? Color.accentColor.opacity(0.4) : Color.clear, lineWidth: 1)
+            )
+            .foregroundStyle(isSelected ? Color.accentColor : Color.primary)
+        }
+        .buttonStyle(.plain)
     }
 
     private func loadCalendarAndPlan() async {
