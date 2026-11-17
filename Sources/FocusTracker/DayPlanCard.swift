@@ -339,8 +339,8 @@ struct DayPlanCard: View {
 
     private var defaultProjectStatuses: Set<String> {
         let statuses = store.workspaceProjectStatuses
-        return store.planIncludedProjectStatuses.isEmpty
-            ? Set(statuses.filter { $0.status != .done }.map(\.name))
+        return (!store.isPlanProjectStatusesConfigured && store.planIncludedProjectStatuses.isEmpty)
+            ? Set(statuses.filter { $0.status != .done }.map(\.id))
             : store.planIncludedProjectStatuses
     }
 
@@ -351,21 +351,29 @@ struct DayPlanCard: View {
     private var isAllStatusesSelected: Bool {
         let statuses = store.workspaceProjectStatuses
         return statuses.allSatisfy { opt in
-            effectiveStatusFilter.contains(where: { $0.caseInsensitiveCompare(opt.name) == .orderedSame })
+            effectiveStatusFilter.contains(where: {
+                $0.caseInsensitiveCompare(opt.id) == .orderedSame ||
+                $0.caseInsensitiveCompare(opt.name) == .orderedSame
+            })
         }
     }
 
     private var statusFilterChipsBar: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
+        let multipleProjects = store.workspaceProjectStatusesByProject.count > 1
+        return ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 6) {
                 filterChip(title: "All Statuses", symbol: nil, isSelected: isAllStatusesSelected) {
-                    activeStatusFilter = Set(store.workspaceProjectStatuses.map(\.name))
+                    activeStatusFilter = Set(store.workspaceProjectStatuses.map(\.id))
                     page = 0
                 }
                 ForEach(store.workspaceProjectStatuses) { opt in
-                    let isSelected = effectiveStatusFilter.contains(where: { $0.caseInsensitiveCompare(opt.name) == .orderedSame })
-                    statusChip(opt: opt, isSelected: isSelected) {
-                        toggleStatusFilter(opt.name)
+                    let isSelected = effectiveStatusFilter.contains(where: {
+                        $0.caseInsensitiveCompare(opt.id) == .orderedSame ||
+                        $0.caseInsensitiveCompare(opt.name) == .orderedSame
+                    })
+                    let title = multipleProjects ? "\(opt.project): \(opt.name)" : opt.name
+                    statusChip(opt: opt, title: title, isSelected: isSelected) {
+                        toggleStatusFilter(opt.id)
                         page = 0
                     }
                 }
@@ -374,20 +382,20 @@ struct DayPlanCard: View {
         }
     }
 
-    private func toggleStatusFilter(_ statusName: String) {
+    private func toggleStatusFilter(_ statusKey: String) {
         if isAllStatusesSelected {
-            activeStatusFilter = [statusName]
-        } else if effectiveStatusFilter.contains(where: { $0.caseInsensitiveCompare(statusName) == .orderedSame }) {
-            let updated = effectiveStatusFilter.filter { $0.caseInsensitiveCompare(statusName) != .orderedSame }
+            activeStatusFilter = [statusKey]
+        } else if effectiveStatusFilter.contains(where: { $0.caseInsensitiveCompare(statusKey) == .orderedSame }) {
+            let updated = effectiveStatusFilter.filter { $0.caseInsensitiveCompare(statusKey) != .orderedSame }
             activeStatusFilter = updated
         } else {
             var updated = effectiveStatusFilter
-            updated.insert(statusName)
+            updated.insert(statusKey)
             activeStatusFilter = updated
         }
     }
 
-    private func statusChip(opt: ProjectStatusOption, isSelected: Bool, action: @escaping () -> Void) -> some View {
+    private func statusChip(opt: ProjectStatusOption, title: String, isSelected: Bool, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             HStack(spacing: 5) {
                 if let color = opt.color, let rgb = LabelChip.rgb(color) {
@@ -399,7 +407,7 @@ struct DayPlanCard: View {
                         .fill(isSelected ? Color.accentColor : Color.secondary)
                         .frame(width: 6, height: 6)
                 }
-                Text(opt.name)
+                Text(title)
             }
             .font(.caption.weight(isSelected ? .semibold : .regular))
             .padding(.horizontal, 9)

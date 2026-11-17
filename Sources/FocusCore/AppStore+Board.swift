@@ -50,28 +50,50 @@ extension AppStore {
         if column.status == .done && isTracking(id) { stop() }
     }
 
-    /// Discovers all unique project status options configured in GitHub Projects
-    /// or present on workspace tickets, with fallback to standard TicketStatus titles.
-    public var workspaceProjectStatuses: [ProjectStatusOption] {
+    /// Discovers all project status options grouped by project, preserving project
+    /// grouping and remote option ordering with fallback to standard TicketStatus titles.
+    public var workspaceProjectStatusesByProject: [(project: String, statuses: [ProjectStatusOption])] {
         let projects = Set(workspaceTickets.compactMap { $0.projectStatusField?.project })
-        var options: [ProjectStatusOption] = []
+            .union(remoteOptions.projectStatus.keys)
+        var grouped: [(project: String, statuses: [ProjectStatusOption])] = []
+
         for project in projects.sorted() {
+            var options: [ProjectStatusOption] = []
             for opt in remoteOptions.projectStatus[project] ?? [] {
                 if !options.contains(where: { $0.name.caseInsensitiveCompare(opt.name) == .orderedSame }) {
-                    options.append(ProjectStatusOption(name: opt.name, status: TicketStatus(optionName: opt.name), color: opt.color))
+                    options.append(ProjectStatusOption(project: project, name: opt.name, status: TicketStatus(optionName: opt.name), color: opt.color))
                 }
             }
-        }
-        for ticket in workspaceTickets {
-            if let val = ticket.projectStatusField?.value,
-               !options.contains(where: { $0.name.caseInsensitiveCompare(val) == .orderedSame }) {
-                options.append(ProjectStatusOption(name: val, status: TicketStatus(optionName: val), color: ticket.projectStatusField?.color))
+            for ticket in workspaceTickets where ticket.projectStatusField?.project == project {
+                if let val = ticket.projectStatusField?.value,
+                   !options.contains(where: { $0.name.caseInsensitiveCompare(val) == .orderedSame }) {
+                    options.append(ProjectStatusOption(project: project, name: val, status: ticket.status, color: ticket.projectStatusField?.color))
+                }
+            }
+            if !options.isEmpty {
+                grouped.append((project: project, statuses: options))
             }
         }
-        if options.isEmpty {
-            return TicketStatus.allCases.map { ProjectStatusOption(name: $0.title, status: $0, color: nil) }
+
+        if grouped.isEmpty {
+            let defaults = TicketStatus.allCases.map {
+                ProjectStatusOption(project: "General", name: $0.title, status: $0, color: nil)
+            }
+            return [("General", defaults)]
         }
-        return options
+        return grouped
+    }
+
+    /// Discovers all unique project status options across all projects.
+    public var workspaceProjectStatuses: [ProjectStatusOption] {
+        workspaceProjectStatusesByProject.flatMap(\.statuses)
+    }
+
+    /// Resolves the ticket's qualified status key (e.g. "Project Alpha/In Dev" or "General/Todo").
+    public func qualifiedStatusKey(for ticket: Ticket) -> String {
+        let project = ticket.projectStatusField?.project ?? "General"
+        let name = ticket.projectStatusField?.value ?? ticket.status.title
+        return ProjectStatusOption.qualifiedKey(project: project, name: name)
     }
 
     /// Resolves the ticket's active project status name.

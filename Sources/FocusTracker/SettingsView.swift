@@ -351,51 +351,53 @@ struct SettingsView: View {
                     .font(.caption).foregroundStyle(.secondary)
             }
 
-            Section("Plan Project Statuses") {
-                let statuses = store.workspaceProjectStatuses
-                let activeStatuses = store.planIncludedProjectStatuses.isEmpty
-                    ? Set(statuses.filter { $0.status != .done }.map(\.name))
-                    : store.planIncludedProjectStatuses
-
-                ForEach(statuses) { opt in
-                    Toggle(isOn: Binding(
-                        get: { activeStatuses.contains(where: { $0.caseInsensitiveCompare(opt.name) == .orderedSame }) },
-                        set: { store.setIncludedProjectStatus(opt.name, isIncluded: $0) }
-                    )) {
-                        HStack(spacing: 8) {
-                            if let color = opt.color, let rgb = LabelChip.rgb(color) {
-                                Circle()
-                                    .fill(Color(red: rgb.r, green: rgb.g, blue: rgb.b))
-                                    .frame(width: 8, height: 8)
-                            } else {
-                                Circle()
-                                    .fill(Color.secondary)
-                                    .frame(width: 8, height: 8)
-                            }
-                            Text(opt.name)
-                            if opt.status == .done {
-                                Text("(Done)")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
+            ForEach(store.workspaceProjectStatusesByProject, id: \.project) { group in
+                let sectionTitle = store.workspaceProjectStatusesByProject.count > 1
+                    ? group.project
+                    : (group.project == "General" ? "Plan Project Statuses" : group.project)
+                Section(sectionTitle) {
+                    ForEach(group.statuses) { opt in
+                        Toggle(isOn: Binding(
+                            get: { store.isProjectStatusIncluded(project: opt.project, name: opt.name) },
+                            set: { store.setIncludedProjectStatus(project: opt.project, name: opt.name, isIncluded: $0) }
+                        )) {
+                            HStack(spacing: 8) {
+                                if let color = opt.color, let rgb = LabelChip.rgb(color) {
+                                    Circle()
+                                        .fill(Color(red: rgb.r, green: rgb.g, blue: rgb.b))
+                                        .frame(width: 8, height: 8)
+                                } else {
+                                    Circle()
+                                        .fill(Color.secondary)
+                                        .frame(width: 8, height: 8)
+                                }
+                                Text(opt.name)
+                                if opt.status == .done {
+                                    Text("(Done)")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
                             }
                         }
                     }
-                }
-                HStack(spacing: 12) {
-                    Button("Select All Active") {
-                        store.selectAllActiveProjectStatuses()
-                    }
-                    .buttonStyle(.secondary)
+                    HStack(spacing: 12) {
+                        Button("Select Active") {
+                            store.setAllActiveStatuses(for: group.project)
+                        }
+                        .buttonStyle(.secondary)
 
-                    Button("Reset to Defaults") {
-                        store.resetIncludedProjectStatusesToDefaults()
+                        Button("Clear") {
+                            store.clearAllStatuses(for: group.project)
+                        }
+                        .buttonStyle(.secondary)
                     }
-                    .buttonStyle(.secondary)
-                }
-                .padding(.top, 4)
+                    .padding(.top, 4)
 
-                Text("Select which project statuses to include when generating daily plan suggestions.")
-                    .font(.caption).foregroundStyle(.secondary)
+                    Text(group.project == "General"
+                        ? "Select which project statuses to include when generating daily plan suggestions."
+                        : "Statuses from \(group.project) to include when generating daily plan suggestions.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
             }
 
             Section {
