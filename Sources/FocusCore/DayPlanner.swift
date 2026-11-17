@@ -7,19 +7,22 @@ public struct PlanSettings: Codable, Equatable, Sendable {
     /// 5 = Monday to Friday, 6 = Monday to Saturday, 7 = every day.
     public var workDays: Int
     public var includedTicketTypes: Set<String>
+    public var includedProjectStatuses: Set<String>
 
     public init(
         workingMinutes: Int = 480,
         focusFactor: Double = 0.75,
         defaultEstimateMinutes: Int = 60,
         workDays: Int = 7,
-        includedTicketTypes: Set<String> = Set(PlanTicketCategory.allCases.map(\.rawValue))
+        includedTicketTypes: Set<String> = Set(PlanTicketCategory.allCases.map(\.rawValue)),
+        includedProjectStatuses: Set<String> = []
     ) {
         self.workingMinutes = workingMinutes
         self.focusFactor = focusFactor
         self.defaultEstimateMinutes = defaultEstimateMinutes
         self.workDays = workDays
         self.includedTicketTypes = includedTicketTypes
+        self.includedProjectStatuses = includedProjectStatuses
     }
 
     enum CodingKeys: String, CodingKey {
@@ -28,6 +31,7 @@ public struct PlanSettings: Codable, Equatable, Sendable {
         case defaultEstimateMinutes
         case workDays
         case includedTicketTypes
+        case includedProjectStatuses
     }
 
     public init(from decoder: Decoder) throws {
@@ -41,6 +45,11 @@ public struct PlanSettings: Codable, Equatable, Sendable {
         } else {
             includedTicketTypes = Set(PlanTicketCategory.allCases.map(\.rawValue))
         }
+        if let statuses = try container.decodeIfPresent(Set<String>.self, forKey: .includedProjectStatuses) {
+            includedProjectStatuses = statuses
+        } else {
+            includedProjectStatuses = []
+        }
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -50,6 +59,7 @@ public struct PlanSettings: Codable, Equatable, Sendable {
         try container.encode(defaultEstimateMinutes, forKey: .defaultEstimateMinutes)
         try container.encode(workDays, forKey: .workDays)
         try container.encode(includedTicketTypes, forKey: .includedTicketTypes)
+        try container.encode(includedProjectStatuses, forKey: .includedProjectStatuses)
     }
 
     public func isWorkingDay(_ date: Date, calendar: Calendar = .current) -> Bool {
