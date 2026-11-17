@@ -351,6 +351,53 @@ struct SettingsView: View {
                     .font(.caption).foregroundStyle(.secondary)
             }
 
+            Section("Plan Project Statuses") {
+                let statuses = store.workspaceProjectStatuses
+                let activeStatuses = store.planIncludedProjectStatuses.isEmpty
+                    ? Set(statuses.filter { $0.status != .done }.map(\.name))
+                    : store.planIncludedProjectStatuses
+
+                ForEach(statuses) { opt in
+                    Toggle(isOn: Binding(
+                        get: { activeStatuses.contains(where: { $0.caseInsensitiveCompare(opt.name) == .orderedSame }) },
+                        set: { store.setIncludedProjectStatus(opt.name, isIncluded: $0) }
+                    )) {
+                        HStack(spacing: 8) {
+                            if let color = opt.color, let rgb = LabelChip.rgb(color) {
+                                Circle()
+                                    .fill(Color(red: rgb.r, green: rgb.g, blue: rgb.b))
+                                    .frame(width: 8, height: 8)
+                            } else {
+                                Circle()
+                                    .fill(Color.secondary)
+                                    .frame(width: 8, height: 8)
+                            }
+                            Text(opt.name)
+                            if opt.status == .done {
+                                Text("(Done)")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                }
+                HStack(spacing: 12) {
+                    Button("Select All Active") {
+                        store.selectAllActiveProjectStatuses()
+                    }
+                    .buttonStyle(.secondary)
+
+                    Button("Reset to Defaults") {
+                        store.resetIncludedProjectStatusesToDefaults()
+                    }
+                    .buttonStyle(.secondary)
+                }
+                .padding(.top, 4)
+
+                Text("Select which project statuses to include when generating daily plan suggestions.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+
             Section {
                 Text("Capacity = (working time − meetings) × focus factor. Tickets without an estimate count as the default estimate. Days off have no capacity and are skipped when planning tomorrow. Changes apply to the plan immediately.")
                     .font(.caption).foregroundStyle(.secondary)

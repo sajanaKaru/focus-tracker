@@ -49,4 +49,33 @@ extension AppStore {
         }
         if column.status == .done && isTracking(id) { stop() }
     }
+
+    /// Discovers all unique project status options configured in GitHub Projects
+    /// or present on workspace tickets, with fallback to standard TicketStatus titles.
+    public var workspaceProjectStatuses: [ProjectStatusOption] {
+        let projects = Set(workspaceTickets.compactMap { $0.projectStatusField?.project })
+        var options: [ProjectStatusOption] = []
+        for project in projects.sorted() {
+            for opt in remoteOptions.projectStatus[project] ?? [] {
+                if !options.contains(where: { $0.name.caseInsensitiveCompare(opt.name) == .orderedSame }) {
+                    options.append(ProjectStatusOption(name: opt.name, status: TicketStatus(optionName: opt.name), color: opt.color))
+                }
+            }
+        }
+        for ticket in workspaceTickets {
+            if let val = ticket.projectStatusField?.value,
+               !options.contains(where: { $0.name.caseInsensitiveCompare(val) == .orderedSame }) {
+                options.append(ProjectStatusOption(name: val, status: TicketStatus(optionName: val), color: ticket.projectStatusField?.color))
+            }
+        }
+        if options.isEmpty {
+            return TicketStatus.allCases.map { ProjectStatusOption(name: $0.title, status: $0, color: nil) }
+        }
+        return options
+    }
+
+    /// Resolves the ticket's active project status name.
+    public func statusName(for ticket: Ticket) -> String {
+        ticket.projectStatusField?.value ?? ticket.status.title
+    }
 }

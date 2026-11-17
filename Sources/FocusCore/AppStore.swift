@@ -21,6 +21,7 @@ public enum PrefKey {
     public static let aiCodeAccess = "aiCodeAccess"
     public static let copilotPath = "copilotPath"
     public static let planIncludedTicketTypes = "planIncludedTicketTypes"
+    public static let planIncludedProjectStatuses = "planIncludedProjectStatuses"
     public static let summaryGroupingMode = "summaryGroupingMode"
 }
 
@@ -74,6 +75,8 @@ public final class AppStore {
     public private(set) var hiddenWorkspaces: Set<String> = []
     /// Ticket types enabled for daily planning.
     public private(set) var planIncludedTicketTypes: Set<String> = []
+    /// Project statuses enabled for daily planning. Empty defaults to all non-done statuses.
+    public private(set) var planIncludedProjectStatuses: Set<String> = []
     public var selectedWorkspace: Workspace = .all {
         didSet { defaults.set(selectedWorkspace.storageValue, forKey: PrefKey.workspace) }
     }
@@ -147,6 +150,11 @@ public final class AppStore {
         } else {
             planIncludedTicketTypes = Set(PlanTicketCategory.allCases.map(\.rawValue))
         }
+        if let savedStatuses = defaults.stringArray(forKey: PrefKey.planIncludedProjectStatuses) {
+            planIncludedProjectStatuses = Set(savedStatuses)
+        } else {
+            planIncludedProjectStatuses = []
+        }
         selectedWorkspace = Workspace(storageValue: defaults.string(forKey: PrefKey.workspace))
         role = defaults.string(forKey: PrefKey.role).flatMap(UserRole.init(rawValue:)) ?? .dev
         load()
@@ -209,6 +217,33 @@ public final class AppStore {
             updated.remove(category.rawValue)
         }
         setIncludedTicketTypes(updated)
+    }
+
+    public func setIncludedProjectStatuses(_ statuses: Set<String>) {
+        planIncludedProjectStatuses = statuses
+        defaults.set(Array(statuses).sorted(), forKey: PrefKey.planIncludedProjectStatuses)
+    }
+
+    public func setIncludedProjectStatus(_ statusName: String, isIncluded: Bool) {
+        var updated = planIncludedProjectStatuses.isEmpty
+            ? Set(workspaceProjectStatuses.filter { $0.status != .done }.map(\.name))
+            : planIncludedProjectStatuses
+        if isIncluded {
+            if !updated.contains(where: { $0.caseInsensitiveCompare(statusName) == .orderedSame }) {
+                updated.insert(statusName)
+            }
+        } else {
+            updated = updated.filter { $0.caseInsensitiveCompare(statusName) != .orderedSame }
+        }
+        setIncludedProjectStatuses(updated)
+    }
+
+    public func resetIncludedProjectStatusesToDefaults() {
+        setIncludedProjectStatuses([])
+    }
+
+    public func selectAllActiveProjectStatuses() {
+        setIncludedProjectStatuses(Set(workspaceProjectStatuses.filter { $0.status != .done }.map(\.name)))
     }
 
     /// All, then the visible workspaces; only All until the login is known.
@@ -1150,7 +1185,8 @@ public final class AppStore {
             focusFactor: Double(focus) / 100,
             defaultEstimateMinutes: estimate,
             workDays: workDays,
-            includedTicketTypes: planIncludedTicketTypes
+            includedTicketTypes: planIncludedTicketTypes,
+            includedProjectStatuses: planIncludedProjectStatuses
         )
     }
 
@@ -1160,7 +1196,12 @@ public final class AppStore {
 
     /// Ranked suggestions for `day`; tickets from the most recent earlier non-empty plan that are still open rank as carried over.
     /// While a sprint is current, only its tickets are suggested. A day off lists only the tickets already planned on it.
-    public func planCandidates(for day: Date, typeFilter: Set<String>? = nil, calendar: Calendar = .current) -> [PlanCandidate] {
+    public func planCandidates(
+        for day: Date,
+        typeFilter: Set<String>? = nil,
+        statusFilter: Set<String>? = nil,
+        calendar: Calendar = .current
+    ) -> [PlanCandidate] {
         let start = calendar.startOfDay(for: day)
         let earlier = dayPlans
             .filter { $0.day < start && !($0.ticketIDs.isEmpty && ($0.deferredTicketIDs ?? []).isEmpty) }
@@ -1170,8 +1211,17 @@ public final class AppStore {
         let tracked = Dictionary(grouping: entries, by: \.ticketID)
             .mapValues { Int(($0.reduce(0) { $0 + $1.duration(at: now) } / 60).rounded()) }
         let activeTypes = typeFilter ?? planSettings.includedTicketTypes
+
+        let available = workspaceProjectStatuses
+        let defaultStatuses = Set(available.filter { $0.status != .done }.map(\.name))
+        let effectiveStatuses: Set<String> = statusFilter ?? (
+            planSettings.includedProjectStatuses.isEmpty ? defaultStatuses : planSettings.includedProjectStatuses
+        )
+
         let eligibleTickets = sprintScoped(workspaceTickets).filter { ticket in
-            activeTypes.contains(ticket.planCategory.rawValue)
+            let name = statusName(for: ticket)
+            return activeTypes.contains(ticket.planCategory.rawValue) &&
+                   effectiveStatuses.contains(where: { $0.caseInsensitiveCompare(name) == .orderedSame })
         }
         // A future day is ranked as of its own start so "due now" means due by then.
         let ranked = DayPlanner.rank(
