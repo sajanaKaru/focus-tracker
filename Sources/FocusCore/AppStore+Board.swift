@@ -53,6 +53,9 @@ extension AppStore {
     /// Discovers all project status options grouped by project, preserving project
     /// grouping and remote option ordering with fallback to standard TicketStatus titles.
     public var workspaceProjectStatusesByProject: [(project: String, statuses: [ProjectStatusOption])] {
+        if cachedProjectStatusesVersion == ticketMutationVersion {
+            return cachedProjectStatuses
+        }
         let projects = Set(workspaceTickets.compactMap { $0.projectStatusField?.project })
             .union(remoteOptions.projectStatus.keys)
         var grouped: [(project: String, statuses: [ProjectStatusOption])] = []
@@ -79,8 +82,13 @@ extension AppStore {
             let defaults = TicketStatus.allCases.map {
                 ProjectStatusOption(project: "General", name: $0.title, status: $0, color: nil)
             }
-            return [("General", defaults)]
+            let res = [("General", defaults)]
+            cachedProjectStatuses = res
+            cachedProjectStatusesVersion = ticketMutationVersion
+            return res
         }
+        cachedProjectStatuses = grouped
+        cachedProjectStatusesVersion = ticketMutationVersion
         return grouped
     }
 

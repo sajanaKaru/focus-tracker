@@ -11,7 +11,7 @@ struct TodaySummaryCard: View {
     @State private var copied: Bool = false
     @State private var groupingMode: SummaryGroupingMode = .byType
 
-    private var isToday: Bool { Calendar.current.isDate(day, inSameDayAs: store.now) }
+    private var isToday: Bool { Calendar.current.isDateInToday(day) }
     private var range: DateInterval { store.dayRange(for: day) }
 
     private var dayLabel: String {

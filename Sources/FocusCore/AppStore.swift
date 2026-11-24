@@ -79,7 +79,10 @@ public final class AppStore {
     public private(set) var planIncludedProjectStatuses: Set<String> = []
     public private(set) var isPlanProjectStatusesConfigured: Bool = false
     public var selectedWorkspace: Workspace = .all {
-        didSet { defaults.set(selectedWorkspace.storageValue, forKey: PrefKey.workspace) }
+        didSet {
+            defaults.set(selectedWorkspace.storageValue, forKey: PrefKey.workspace)
+            bumpTicketMutation()
+        }
     }
     /// A UI preference (tabs, ordering, defaults), not an access control.
     public var role: UserRole = .dev {
@@ -103,6 +106,51 @@ public final class AppStore {
     public internal(set) var draftNote: String?
 
     public internal(set) var backupVersions: [BackupVersion] = []
+
+    public private(set) var ticketMutationVersion: Int = 0
+    public private(set) var entryMutationVersion: Int = 0
+    @ObservationIgnored public private(set) var planMutationVersion: Int = 0
+
+    @ObservationIgnored var cachedProjectStatusesVersion: Int = -1
+    @ObservationIgnored var cachedProjectStatuses: [(project: String, statuses: [ProjectStatusOption])] = []
+
+    @ObservationIgnored private var cachedWorkspaceSprintsVersion: Int = -1
+    @ObservationIgnored private var cachedWorkspaceSprints: [SprintInfo] = []
+
+    @ObservationIgnored private var cachedTrackedMinutesVersion: Int = -1
+    @ObservationIgnored private var cachedTrackedMinutes: [UUID: Int] = [:]
+
+    private struct PlanCandidatesCacheKey: Hashable {
+        let dayStart: Date
+        let typeFilter: Set<String>?
+        let statusFilter: Set<String>?
+        let sprintFilter: Set<String>?
+        let ticketMutationVersion: Int
+        let entryMutationVersion: Int
+        let planMutationVersion: Int
+    }
+    @ObservationIgnored private var planCandidatesCache: [PlanCandidatesCacheKey: [PlanCandidate]] = [:]
+
+    private func invalidatePlanCandidatesCache() {
+        if !planCandidatesCache.isEmpty {
+            planCandidatesCache.removeAll(keepingCapacity: true)
+        }
+    }
+
+    private func bumpTicketMutation() {
+        ticketMutationVersion &+= 1
+        invalidatePlanCandidatesCache()
+    }
+
+    private func bumpEntryMutation() {
+        entryMutationVersion &+= 1
+        invalidatePlanCandidatesCache()
+    }
+
+    private func bumpPlanMutation() {
+        planMutationVersion &+= 1
+        invalidatePlanCandidatesCache()
+    }
 
     @ObservationIgnored let storeURL: URL
     @ObservationIgnored let backupVault: BackupVault
@@ -178,12 +226,13 @@ public final class AppStore {
     public func ticket(_ id: UUID) -> Ticket? { tickets.first { $0.id == id } }
 
     public var hasCurrentSprint: Bool {
-        tickets.contains { $0.sprints.contains { $0.isCurrent(at: now) } }
+        tickets.contains { $0.sprints.contains { $0.isCurrent(at: Date()) } }
     }
 
     public func setGitHubLogin(_ login: String) {
         githubLogin = login
         defaults.set(login, forKey: PrefKey.githubLogin)
+        bumpTicketMutation()
     }
 
     /// Personal plus one entry per organization seen in tickets or pull requests; empty until the login is known.
@@ -205,11 +254,13 @@ public final class AppStore {
     public func setWorkspace(_ workspace: Workspace, visible: Bool) {
         if visible { hiddenWorkspaces.remove(workspace.storageValue) } else { hiddenWorkspaces.insert(workspace.storageValue) }
         defaults.set(hiddenWorkspaces.sorted(), forKey: PrefKey.hiddenWorkspaces)
+        bumpTicketMutation()
     }
 
     public func setIncludedTicketTypes(_ types: Set<String>) {
         planIncludedTicketTypes = types
         defaults.set(Array(types).sorted(), forKey: PrefKey.planIncludedTicketTypes)
+        bumpTicketMutation()
     }
 
     public func setIncludedTicketType(_ category: PlanTicketCategory, isIncluded: Bool) {
@@ -226,6 +277,7 @@ public final class AppStore {
         planIncludedProjectStatuses = statuses
         isPlanProjectStatusesConfigured = true
         defaults.set(Array(statuses).sorted(), forKey: PrefKey.planIncludedProjectStatuses)
+        bumpTicketMutation()
     }
 
     public func isProjectStatusIncluded(project: String, name: String) -> Bool {
@@ -323,6 +375,7 @@ public final class AppStore {
         planIncludedProjectStatuses = []
         isPlanProjectStatusesConfigured = false
         defaults.removeObject(forKey: PrefKey.planIncludedProjectStatuses)
+        bumpTicketMutation()
     }
 
     public func selectAllActiveProjectStatuses() {
@@ -366,7 +419,8 @@ public final class AppStore {
     public var currentSprintTickets: [Ticket] {
         let open = workspaceTickets.filter { $0.status != .done }
         guard hasCurrentSprint else { return open }
-        return open.filter { $0.sprints.contains { $0.isCurrent(at: now) } }
+        let referenceDate = Date()
+        return open.filter { $0.sprints.contains { $0.isCurrent(at: referenceDate) } }
     }
 
     public var openSpecialWorkCount: Int {
@@ -409,6 +463,9 @@ public final class AppStore {
 
     /// Unique sprints present in workspace tickets.
     public var workspaceSprints: [SprintInfo] {
+        if cachedWorkspaceSprintsVersion == ticketMutationVersion {
+            return cachedWorkspaceSprints
+        }
         var map: [String: SprintInfo] = [:]
         for ticket in workspaceTickets {
             for sprint in ticket.sprints {
@@ -422,7 +479,7 @@ public final class AppStore {
                 }
             }
         }
-        return map.values.sorted {
+        let result = map.values.sorted {
             if let s1 = $0.start, let s2 = $1.start, s1 != s2 {
                 return s1 < s2
             }
@@ -431,6 +488,9 @@ public final class AppStore {
             }
             return $0.name.localizedStandardCompare($1.name) == .orderedAscending
         }
+        cachedWorkspaceSprints = result
+        cachedWorkspaceSprintsVersion = ticketMutationVersion
+        return result
     }
 
     /// Returns the active current sprint.
@@ -484,13 +544,14 @@ public final class AppStore {
         guard !allSprints.isEmpty else { return [] }
         var result = Set<String>()
         let projects = Set(allSprints.map(\.project))
+        let referenceDate = Date()
         for proj in projects {
             let projSprints = allSprints.filter { $0.project == proj }
-            let current = projSprints.first { $0.isCurrent(at: now) }
-            if let current, !isSprintFinished(current, at: now) {
+            let current = projSprints.first { $0.isCurrent(at: referenceDate) }
+            if let current, !isSprintFinished(current, at: referenceDate) {
                 result.insert(current.name)
                 result.insert(current.id)
-            } else if let next = nextSprint(after: current, forProject: proj, at: now) {
+            } else if let next = nextSprint(after: current, forProject: proj, at: referenceDate) {
                 result.insert(next.name)
                 result.insert(next.id)
             } else if let current {
@@ -498,6 +559,22 @@ public final class AppStore {
                 result.insert(current.id)
             }
         }
+        return result
+    }
+
+    /// Pre-indexed tracked minutes by ticket ID, memoized by entryMutationVersion.
+    public func trackedMinutesByTicketID() -> [UUID: Int] {
+        if cachedTrackedMinutesVersion == entryMutationVersion {
+            return cachedTrackedMinutes
+        }
+        let referenceDate = Date()
+        var totals: [UUID: TimeInterval] = [:]
+        for entry in entries {
+            totals[entry.ticketID, default: 0] += entry.duration(at: referenceDate)
+        }
+        let result = totals.mapValues { Int(($0 / 60).rounded()) }
+        cachedTrackedMinutes = result
+        cachedTrackedMinutesVersion = entryMutationVersion
         return result
     }
 
@@ -748,6 +825,7 @@ public final class AppStore {
     public func addTicket(title: String, priority: Priority = .none) -> Ticket {
         let ticket = Ticket(title: title, priority: priority)
         tickets.append(ticket)
+        bumpTicketMutation()
         record(.ticketCreate, ticket: ticket, new: title)
         save()
         return ticket
@@ -758,6 +836,7 @@ public final class AppStore {
         let before = tickets[i]
         change(&tickets[i])
         tickets[i].updatedAt = Date()
+        bumpTicketMutation()
         for c in before.changes(to: tickets[i]) {
             record(.ticketEdit, ticket: tickets[i], field: c.field, old: c.old, new: c.new, oldList: c.oldList, newList: c.newList)
         }
@@ -828,6 +907,8 @@ public final class AppStore {
         testResults.removeAll { $0.ticketID == id }
         testVerdicts.removeAll { $0.ticketID == id }
         bugReports.removeAll { $0.ticketID == id }
+        bumpTicketMutation()
+        bumpEntryMutation()
         save()
     }
 
@@ -926,6 +1007,7 @@ public final class AppStore {
         stopActivity()
         let started = Date()
         entries.append(TimeEntry(ticketID: ticketID, start: started))
+        bumpEntryMutation()
         record(.timer, ticket: tickets[i], field: "Timer started", at: started)
         if tickets[i].status == .backlog || tickets[i].status == .todo { setStatus(ticketID, .inProgress) }
         now = started
@@ -936,6 +1018,7 @@ public final class AppStore {
     public func stop(at end: Date = Date()) {
         guard let i = entries.lastIndex(where: { $0.end == nil }) else { return }
         entries[i].end = max(end, entries[i].start)
+        bumpEntryMutation()
         record(.timer, ticket: ticket(entries[i].ticketID), field: "Timer stopped", new: Self.minutesText(entries[i].end!.timeIntervalSince(entries[i].start)), at: entries[i].end!)
         tickTask?.cancel()
         tickTask = nil
@@ -950,6 +1033,7 @@ public final class AppStore {
     public func addManualEntry(ticketID: UUID, duration: TimeInterval, endingAt end: Date = Date()) {
         guard duration > 0, ticket(ticketID) != nil else { return }
         entries.append(TimeEntry(ticketID: ticketID, start: end.addingTimeInterval(-duration), end: end))
+        bumpEntryMutation()
         record(.timeEntry, ticket: ticket(ticketID), field: "Manual entry added", new: Self.minutesText(duration))
         save()
     }
@@ -959,6 +1043,7 @@ public final class AppStore {
             record(.timeEntry, ticket: ticket(e.ticketID), field: "Entry deleted", old: Self.minutesText((e.end ?? now).timeIntervalSince(e.start)))
         }
         entries.removeAll { $0.id == id }
+        bumpEntryMutation()
         if activeEntry == nil && activeActivity == nil { tickTask?.cancel(); tickTask = nil }
         save()
     }
@@ -975,6 +1060,7 @@ public final class AppStore {
         )
         entries[i].start = start
         entries[i].end = newEnd
+        bumpEntryMutation()
         save()
     }
 
@@ -1112,6 +1198,7 @@ public final class AppStore {
             }
             tickets = Self.merge(existing: tickets, remote: enriched)
             applyDeployments(await deploymentMoves(for: enriched, client: client), to: enriched)
+            bumpTicketMutation()
             syncState = .succeeded(Date(), remote.count)
             save()
         } catch {
@@ -1258,6 +1345,7 @@ public final class AppStore {
         }
         guard updated != tickets[i] else { return }
         tickets[i] = updated
+        bumpTicketMutation()
         if updated.status == .done && isTracking(id) { stop() }
         save()
     }
@@ -1382,13 +1470,25 @@ public final class AppStore {
         calendar: Calendar = .current
     ) -> [PlanCandidate] {
         let start = calendar.startOfDay(for: day)
+        let cacheKey = PlanCandidatesCacheKey(
+            dayStart: start,
+            typeFilter: typeFilter,
+            statusFilter: statusFilter,
+            sprintFilter: sprintFilter,
+            ticketMutationVersion: ticketMutationVersion,
+            entryMutationVersion: entryMutationVersion,
+            planMutationVersion: planMutationVersion
+        )
+        if let cached = planCandidatesCache[cacheKey] {
+            return cached
+        }
+
         let earlier = dayPlans
             .filter { $0.day < start && !($0.ticketIDs.isEmpty && ($0.deferredTicketIDs ?? []).isEmpty) }
             .max { $0.day < $1.day }
         let earlierIDs = (earlier?.ticketIDs ?? []) + (earlier?.deferredTicketIDs ?? [])
         let carried = Set(earlierIDs.filter { ticket($0).map { $0.status != .done } ?? false })
-        let tracked = Dictionary(grouping: entries, by: \.ticketID)
-            .mapValues { Int(($0.reduce(0) { $0 + $1.duration(at: now) } / 60).rounded()) }
+        let tracked = trackedMinutesByTicketID()
         let activeTypes = typeFilter ?? planSettings.includedTicketTypes
 
         let allOptions = workspaceProjectStatusesByProject.flatMap(\.statuses)
@@ -1399,19 +1499,20 @@ public final class AppStore {
                 : planSettings.includedProjectStatuses
         )
 
-        let activeSprints = workspaceSprints.filter { $0.isCurrent(at: now) }
-        let unfinishedActiveSprints = activeSprints.filter { !isSprintFinished($0, at: now) }
-        let finishedActiveSprints = activeSprints.filter { isSprintFinished($0, at: now) }
+        let referenceDate = Date()
+        let activeSprints = workspaceSprints.filter { $0.isCurrent(at: referenceDate) }
+        let unfinishedActiveSprints = activeSprints.filter { !isSprintFinished($0, at: referenceDate) }
+        let finishedActiveSprints = activeSprints.filter { isSprintFinished($0, at: referenceDate) }
         var activeSprintNames = Set(unfinishedActiveSprints.map(\.name))
         var nextSprintNames = Set<String>()
 
         for finished in finishedActiveSprints {
-            if let next = nextSprint(after: finished, forProject: finished.project, at: now) {
+            if let next = nextSprint(after: finished, forProject: finished.project, at: referenceDate) {
                 activeSprintNames.insert(next.name)
             }
         }
         for active in unfinishedActiveSprints {
-            if let next = nextSprint(after: active, forProject: active.project, at: now) {
+            if let next = nextSprint(after: active, forProject: active.project, at: referenceDate) {
                 nextSprintNames.insert(next.name)
             }
         }
@@ -1448,19 +1549,29 @@ public final class AppStore {
         }
         // A future day is ranked as of its own start so "due now" means due by then.
         let ranked = DayPlanner.rank(
-            tickets: eligibleTickets, carriedOver: carried, now: max(now, start), settings: planSettings, calendar: calendar,
+            tickets: eligibleTickets, carriedOver: carried, now: max(referenceDate, start), settings: planSettings, calendar: calendar,
             trackedMinutes: tracked, plannedAheadMinutes: plannedAheadMinutes(before: start, tracked: tracked, calendar: calendar),
             activeSprintNames: activeSprintNames, nextSprintNames: nextSprintNames
         )
         let planned = Set(plan(for: day, calendar: calendar)?.ticketIDs ?? [])
-        guard planSettings.isWorkingDay(day, calendar: calendar) else { return ranked.filter { planned.contains($0.id) } }
-        // Tickets the earlier planned days are expected to finish drop out, unless already planned on this day.
-        return ranked.filter { $0.plannedAheadMinutes == 0 || $0.estimateMinutes > 0 || planned.contains($0.id) }
+        let result: [PlanCandidate]
+        if !planSettings.isWorkingDay(day, calendar: calendar) {
+            result = ranked.filter { planned.contains($0.id) }
+        } else {
+            // Tickets the earlier planned days are expected to finish drop out, unless already planned on this day.
+            result = ranked.filter { $0.plannedAheadMinutes == 0 || $0.estimateMinutes > 0 || planned.contains($0.id) }
+        }
+
+        if planCandidatesCache.count > 30 {
+            planCandidatesCache.removeAll(keepingCapacity: true)
+        }
+        planCandidatesCache[cacheKey] = result
+        return result
     }
 
     /// Work that planned working days from today up to `start` are expected to use of each ticket.
     private func plannedAheadMinutes(before start: Date, tracked: [UUID: Int], calendar: Calendar) -> [UUID: Int] {
-        let todayStart = calendar.startOfDay(for: now)
+        let todayStart = calendar.startOfDay(for: Date())
         guard start > todayStart else { return [:] }
         let settings = planSettings
         var remaining: [UUID: Int] = [:]
@@ -1468,7 +1579,8 @@ public final class AppStore {
             remaining[ticket.id] = DayPlanner.remainingMinutes(of: ticket, tracked: tracked[ticket.id] ?? 0, settings: settings)
         }
         let todayRange = dayRange(for: todayStart, calendar: calendar)
-        let trackedToday = Int((entries.reduce(0) { $0 + $1.duration(in: todayRange, at: now) } / 60).rounded())
+        let referenceDate = Date()
+        let trackedToday = Int((entries.reduce(0) { $0 + $1.duration(in: todayRange, at: referenceDate) } / 60).rounded())
         let plans = dayPlans
             .filter { $0.day >= todayStart && $0.day < start && settings.isWorkingDay($0.day, calendar: calendar) }
             .sorted { $0.day < $1.day }
@@ -1482,8 +1594,9 @@ public final class AppStore {
     }
 
     public func capacity(for day: Date, calendarBusy: [DateInterval], calendar: Calendar = .current) -> Capacity {
+        let referenceDate = Date()
         let logged = activities.compactMap { activity -> DateInterval? in
-            let end = activity.end ?? now
+            let end = activity.end ?? referenceDate
             return end > activity.start ? DateInterval(start: activity.start, end: end) : nil
         }
         return DayPlanner.capacity(day: dayRange(for: day, calendar: calendar), busy: calendarBusy + logged, settings: planSettings, calendar: calendar)
@@ -1518,6 +1631,7 @@ public final class AppStore {
         plan.deferredTicketIDs = deferredTicketIDs
         dayPlans.removeAll { calendar.isDate($0.day, inSameDayAs: day) }
         dayPlans.append(plan)
+        bumpPlanMutation()
         save()
         return plan
     }
@@ -1536,6 +1650,7 @@ public final class AppStore {
             dayPlans.append(DayPlan(day: calendar.startOfDay(for: day), ticketIDs: [ticketID]))
             record(.dayPlan, ticket: ticket(ticketID), field: "Added to day plan")
         }
+        bumpPlanMutation()
         save()
     }
 
@@ -1545,6 +1660,7 @@ public final class AppStore {
         let count = dayPlans[index].ticketIDs.count
         guard count > 0 else { return }
         dayPlans[index].ticketIDs.removeAll()
+        bumpPlanMutation()
         record(.dayPlan, field: "Unplanned all \(count) tickets")
         save()
     }
@@ -1558,6 +1674,7 @@ public final class AppStore {
         guard !trimmed.isEmpty else { return nil }
         let ticket = Ticket(title: trimmed, labels: [kind.title], isQuickCapture: true)
         tickets.append(ticket)
+        bumpTicketMutation()
         record(.ticketCreate, ticket: ticket, new: trimmed)
         start(ticket.id)
         return self.ticket(ticket.id)
@@ -1568,7 +1685,7 @@ public final class AppStore {
             plannedIDs: Set(plan(for: day, calendar: calendar)?.ticketIDs ?? []),
             tickets: workspaceTickets, entries: workspaceEntries, activities: workspaceActivities,
             capacityMinutes: capacity(for: day, calendarBusy: calendarBusy, calendar: calendar).capacityMinutes,
-            day: dayRange(for: day, calendar: calendar), now: now, settings: planSettings
+            day: dayRange(for: day, calendar: calendar), now: Date(), settings: planSettings
         )
     }
 
@@ -1595,6 +1712,7 @@ public final class AppStore {
             dayPlans[j].ticketIDs.append(ticketID)
         }
         record(.dayPlan, ticket: ticket(ticketID), field: "Deferred to tomorrow")
+        bumpPlanMutation()
         save()
     }
 
@@ -1612,18 +1730,26 @@ public final class AppStore {
         var ignored = dayPlans[i].ignoredNewTicketIDs ?? []
         if !ignored.contains(ticketID) { ignored.append(ticketID) }
         dayPlans[i].ignoredNewTicketIDs = ignored
+        bumpPlanMutation()
         save()
     }
 
-    func insertTicketForTest(_ ticket: Ticket) { tickets.append(ticket) }
+    func insertTicketForTest(_ ticket: Ticket) {
+        tickets.append(ticket)
+        bumpTicketMutation()
+    }
 
     func clearDeploymentForTest(_ id: UUID) {
-        if let i = tickets.firstIndex(where: { $0.id == id }) { tickets[i].deployment = nil }
+        if let i = tickets.firstIndex(where: { $0.id == id }) {
+            tickets[i].deployment = nil
+            bumpTicketMutation()
+        }
     }
 
     func storeOptions(_ options: RemoteOptions) {
         remoteOptions = options
         lastOptionsLoad = Date()
+        bumpTicketMutation()
         save()
     }
 
@@ -1634,6 +1760,7 @@ public final class AppStore {
         guard let i = tickets.firstIndex(where: { $0.id == id }) else { return }
         apply(&tickets[i])
         tickets[i].updatedAt = Date()
+        bumpTicketMutation()
         let ticket = tickets[i]
         let canPush = remote != nil && ticket.github != nil && !(tokenProvider() ?? "").isEmpty
         let key = remote.map { "\(id)|\($0.slot)" }
@@ -1877,6 +2004,9 @@ public final class AppStore {
                 }
             }
         }
+        bumpTicketMutation()
+        bumpEntryMutation()
+        bumpPlanMutation()
     }
 
     func save() {

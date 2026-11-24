@@ -12,16 +12,16 @@ struct DevTodayView: View {
     @State private var copied = false
     @State private var showDatePicker = false
 
-    private var day: Date { chosenDay ?? store.now }
-    private var isToday: Bool { Calendar.current.isDate(day, inSameDayAs: store.now) }
-    private var isFuture: Bool { Calendar.current.startOfDay(for: day) > Calendar.current.startOfDay(for: store.now) }
+    private var day: Date { chosenDay ?? Calendar.current.startOfDay(for: Date()) }
+    private var isToday: Bool { Calendar.current.isDateInToday(day) }
+    private var isFuture: Bool { Calendar.current.startOfDay(for: day) > Calendar.current.startOfDay(for: Date()) }
     private var todayRange: DateInterval { store.dayRange(for: day) }
 
     private var dayBinding: Binding<Date> {
         Binding(
             get: { day },
             set: { newValue in
-                chosenDay = Calendar.current.isDate(newValue, inSameDayAs: store.now) ? nil : newValue
+                chosenDay = Calendar.current.isDateInToday(newValue) ? nil : newValue
                 showDatePicker = false
             }
         )
@@ -105,7 +105,7 @@ struct DevTodayView: View {
     }
 
     private var greeting: String {
-        switch Calendar.current.component(.hour, from: store.now) {
+        switch Calendar.current.component(.hour, from: Date()) {
         case 5..<12: "Good morning"
         case 12..<18: "Good afternoon"
         default: "Good evening"
@@ -115,7 +115,7 @@ struct DevTodayView: View {
     var body: some View {
         let range = todayRange
         let inProgress = store.workspaceTickets.filter { $0.status.isInFlight }
-        let active = inProgress.filter { filter.matches($0, now: store.now) }
+        let active = inProgress.filter { filter.matches($0, now: Date()) }
         // A running timer goes first; the sort is stable so the rest keep their order.
         let inDev = active.filter { $0.status == .inProgress }.sorted { store.isTracking($0.id) && !store.isTracking($1.id) }
         let inReview = active.filter { $0.status == .inReview }
@@ -158,11 +158,7 @@ struct DevTodayView: View {
                 }
 
                 if !isFuture {
-                    HStack(spacing: 14) {
-                        StatCard(title: isToday ? "Tracked today" : "Tracked", value: Format.short(store.trackedTime(in: range)), symbol: "timer", tint: Theme.accent)
-                        StatCard(title: "Active tickets", value: "\(active.count)", symbol: "bolt.fill", tint: Theme.warning)
-                        StatCard(title: "Calls & meetings", value: Format.short(store.activityTime(in: range)), symbol: "phone.fill", tint: Theme.accentEnd)
-                    }
+                    DevTodayStatsRow(range: range, isToday: isToday, activeCount: active.count)
 
                     TodaySummaryCard(day: day, selectedTicketID: $selectedTicketID)
                 }
@@ -224,6 +220,21 @@ struct DevTodayView: View {
                 .cardStyle(padding: 10, selected: selectedTicketID == ticket.id)
                 .hoverLift()
                 .selectsTicket(ticket.id, selection: $selectedTicketID)
+        }
+    }
+}
+
+private struct DevTodayStatsRow: View {
+    @Environment(AppStore.self) private var store
+    let range: DateInterval
+    let isToday: Bool
+    let activeCount: Int
+
+    var body: some View {
+        HStack(spacing: 14) {
+            StatCard(title: isToday ? "Tracked today" : "Tracked", value: Format.short(store.trackedTime(in: range)), symbol: "timer", tint: Theme.accent)
+            StatCard(title: "Active tickets", value: "\(activeCount)", symbol: "bolt.fill", tint: Theme.warning)
+            StatCard(title: "Calls & meetings", value: Format.short(store.activityTime(in: range)), symbol: "phone.fill", tint: Theme.accentEnd)
         }
     }
 }
