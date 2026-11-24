@@ -27,7 +27,8 @@ struct DayPlanCard: View {
     @State private var calendarBusy: [DateInterval] = []
     @State private var calendarNote: String?
     @State private var page = 0
-    @State private var search = ""
+    @State private var searchText = ""
+    @State private var debouncedQuery = ""
     @State private var activeTypeFilter: Set<String>? = nil
     @State private var activeSprintFilter: Set<String>? = nil
     @State private var showingUnplanConfirmation = false
@@ -55,7 +56,7 @@ struct DayPlanCard: View {
         let capacity = store.capacity(for: day, calendarBusy: calendarBusy)
         let planned = DayPlanner.plannedMinutes(candidates, ids: plannedIDs, capacityMinutes: capacity.capacityMinutes)
         let over = planned > capacity.capacityMinutes
-        let isToday = Calendar.current.isDate(day, inSameDayAs: store.now)
+        let isToday = Calendar.current.isDateInToday(day)
         let workingDay = store.planSettings.isWorkingDay(day)
         let load = store.dayLoad(for: day, calendarBusy: calendarBusy)
         let deferIDs = isToday && workingDay ? Set(store.deferCandidates(for: day, calendarBusy: calendarBusy)) : []
@@ -128,7 +129,7 @@ struct DayPlanCard: View {
                 )
             } else {
                 searchField
-                let query = search.trimmingCharacters(in: .whitespacesAndNewlines)
+                let query = debouncedQuery
                 let matches = query.isEmpty ? candidates : candidates.filter {
                     $0.ticket.title.localizedCaseInsensitiveContains(query)
                         || $0.ticket.displayKey.localizedCaseInsensitiveContains(query)
@@ -139,7 +140,7 @@ struct DayPlanCard: View {
                 if matches.isEmpty {
                     EmptyHint(text: "No tickets match \"\(query)\".", symbol: "magnifyingglass")
                 } else {
-                    VStack(spacing: 0) {
+                    LazyVStack(spacing: 0) {
                         ForEach(Array(visible.enumerated()), id: \.element.id) { index, candidate in
                             if index > 0 { Divider() }
                             row(candidate, planned: plannedIDs.contains(candidate.id), canDefer: deferIDs.contains(candidate.id))
@@ -163,16 +164,32 @@ struct DayPlanCard: View {
             Text("Are you sure you want to unplan all tickets for today? This will remove all planned tickets from today's plan.")
         }
         .task(id: "\(candidates.isEmpty)|\(Calendar.current.startOfDay(for: day))") { await loadCalendarAndPlan() }
+        .task(id: searchText) {
+            let trimmed = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmed.isEmpty {
+                debouncedQuery = ""
+                page = 0
+                return
+            }
+            do {
+                try await Task.sleep(for: .milliseconds(250))
+                debouncedQuery = trimmed
+                page = 0
+            } catch { }
+        }
     }
 
     private var searchField: some View {
         HStack(spacing: 8) {
             Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
-            TextField("Search plan", text: $search)
+            TextField("Search plan", text: $searchText)
                 .textFieldStyle(.plain)
-                .onChange(of: search) { page = 0 }
-            if !search.isEmpty {
-                Button { search = "" } label: { Image(systemName: "xmark.circle.fill") }
+            if !searchText.isEmpty {
+                Button {
+                    searchText = ""
+                    debouncedQuery = ""
+                    page = 0
+                } label: { Image(systemName: "xmark.circle.fill") }
                     .buttonStyle(.plain)
                     .foregroundStyle(.secondary)
                     .help("Clear search")
@@ -215,7 +232,7 @@ struct DayPlanCard: View {
                         .help(candidate.ticket.planCategory.rawValue)
                     Text(candidate.ticket.displayKey)
                     ForEach(candidate.ticket.sprints, id: \.value) { sprint in
-                        SprintBadge(sprintName: sprint.value, isCurrent: sprint.isCurrent(at: store.now))
+                        SprintBadge(sprintName: sprint.value, isCurrent: sprint.isCurrent(at: Date()))
                     }
                 }
                 .font(.caption)
@@ -283,7 +300,7 @@ struct DayPlanCard: View {
                             HStack(spacing: 5) {
                                 Text(candidate.ticket.displayKey).font(.caption).foregroundStyle(.secondary)
                                 ForEach(candidate.ticket.sprints, id: \.value) { sprint in
-                                    SprintBadge(sprintName: sprint.value, isCurrent: sprint.isCurrent(at: store.now))
+                                    SprintBadge(sprintName: sprint.value, isCurrent: sprint.isCurrent(at: Date()))
                                 }
                             }
                         }
@@ -423,7 +440,7 @@ struct DayPlanCard: View {
     private var sprintFilterChipsBar: some View {
         let sprints = store.workspaceSprints
         let multipleProjects = Set(sprints.map(\.project)).count > 1
-        let next = store.nextSprint(at: store.now)
+        let next = store.nextSprint(at: Date())
         let hasNoSprintTickets = store.workspaceTickets.contains { $0.sprints.isEmpty }
 
         return ScrollView(.horizontal, showsIndicators: false) {
@@ -433,7 +450,7 @@ struct DayPlanCard: View {
                     page = 0
                 }
                 ForEach(sprints, id: \.id) { sprint in
-                    let isCurrent = sprint.isCurrent(at: store.now)
+                    let isCurrent = sprint.isCurrent()
                     let isNext = !isCurrent && next?.id == sprint.id
                     let suffix = isCurrent ? " (Current)" : (isNext ? " (Next)" : "")
                     let baseName = multipleProjects && !sprint.project.isEmpty ? "\(sprint.project): \(sprint.name)" : sprint.name

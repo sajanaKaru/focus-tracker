@@ -107,7 +107,7 @@ public struct CustomField: Codable, Hashable, Sendable {
         self.color = color
     }
 
-    public func isCurrent(at date: Date) -> Bool {
+    public func isCurrent(at date: Date = Date()) -> Bool {
         guard kind == .iteration, let start, let end else { return false }
         return start <= date && date < end
     }
